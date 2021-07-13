@@ -2,6 +2,19 @@
 
 ors is an experimental OS implementation with Rust.
 
+## Setup
+
+```bash
+# Rust nightly required at the moment
+rustup default nightly
+
+# Build ors-loader.efi and ors-kernel.elf
+make
+
+# Run on QEMU
+make qemu
+```
+
 ## Roadmap
 
 - [ ] Complete [ゼロからのOS自作入門](https://www.amazon.co.jp/gp/product/B08Z3MNR9)

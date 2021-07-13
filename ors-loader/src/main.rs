@@ -30,7 +30,7 @@ fn efi_main(image: Handle, mut st: SystemTable<Boot>) -> Status {
     dump_memory_map("memmap", image, &st);
 
     info!("load_kernel");
-    let entry_point_addr = load_kernel("kernel.elf", image, &st);
+    let entry_point_addr = load_kernel("ors-kernel.elf", image, &st);
 
     info!("entry_point_addr = 0x{:x}", entry_point_addr);
     let entry_point: extern "sysv64" fn(&frame_buffer::FrameBuffer) =
