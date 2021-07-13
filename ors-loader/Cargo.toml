@@ -1,0 +1,12 @@
+[package]
+authors = ["yubrot <yubrot@gmail.com>"]
+edition = "2018"
+name = "ors-loader"
+version = "0.1.0"
+
+[dependencies]
+goblin = {version = "0.4", features = ["elf32", "elf64", "endian_fd"], default-features = false}
+log = {version = "0.4", default-features = false}
+ors-common = {path = "../ors-common"}
+uefi = {version = "0.11", features = ["alloc", "logger", "exts"]}
+uefi-services = "0.8"

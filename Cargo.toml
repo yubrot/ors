@@ -1,0 +1,6 @@
+[workspace]
+members = [
+  "ors-common",
+  "ors-loader",
+  "ors-kernel",
+]

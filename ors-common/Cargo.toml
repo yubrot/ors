@@ -1,0 +1,6 @@
+[package]
+edition = "2018"
+name = "ors-common"
+version = "0.1.0"
+
+[dependencies]
