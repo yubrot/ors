@@ -4,4 +4,5 @@ name = "ors-kernel"
 version = "0.1.0"
 
 [dependencies]
+modular-bitfield = "0.11"
 ors-common = {path = "../ors-common"}

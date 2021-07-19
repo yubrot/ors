@@ -2,11 +2,42 @@
 #![no_main]
 #![feature(asm)]
 
+mod memory_manager;
+mod page_table;
+mod segments;
+
+use core::slice;
+use memory_manager::{BitmapMemoryManager, FrameId};
 use ors_common::frame_buffer::{FrameBuffer, PixelFormat};
 use ors_common::hlt;
+use ors_common::memory_map::MemoryMap;
+
+static mut MEMORY_MANAGER: BitmapMemoryManager = BitmapMemoryManager::new();
 
 #[no_mangle]
-pub extern "sysv64" fn kernel_main(fb: &FrameBuffer) {
+pub extern "sysv64" fn kernel_main2(fb: &FrameBuffer, mm: &MemoryMap) {
+    segments::initialize();
+    page_table::initialize();
+
+    unsafe {
+        let mut phys_available_end = 0;
+        for d in slice::from_raw_parts(mm.descriptors, mm.descriptors_len as usize) {
+            let phys_start = d.phys_start as usize;
+            let phys_end = d.phys_end as usize;
+            if phys_available_end < d.phys_start as usize {
+                MEMORY_MANAGER.mark_allocated_in_bytes(
+                    FrameId::from_physical_address(phys_available_end),
+                    phys_start - phys_available_end,
+                );
+            }
+            phys_available_end = phys_end;
+        }
+        MEMORY_MANAGER.set_memory_range(
+            FrameId::MIN,
+            FrameId::from_physical_address(phys_available_end),
+        );
+    }
+
     match fb.format {
         PixelFormat::Rgb => render_example::<RgbPixelWriter>(fb),
         PixelFormat::Bgr => render_example::<BgrPixelWriter>(fb),

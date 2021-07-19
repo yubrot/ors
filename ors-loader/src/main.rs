@@ -2,6 +2,7 @@
 #![no_main]
 #![feature(asm)]
 #![feature(abi_efiapi)]
+#![feature(vec_into_raw_parts)]
 
 #[macro_use]
 extern crate alloc;
@@ -9,16 +10,17 @@ extern crate alloc;
 #[macro_use]
 mod fs;
 
+use alloc::vec::Vec;
 use core::{mem, slice};
 use goblin::elf;
 use log::info;
-use ors_common::{frame_buffer, hlt};
+use ors_common::{frame_buffer, hlt, memory_map};
 use uefi::prelude::*;
 use uefi::proto::console::gop::{GraphicsOutput, PixelFormat};
 use uefi::table::boot::{AllocateType, MemoryDescriptor, MemoryType};
 use uefi::table::Runtime;
 
-const EFI_PAGE_SIZE: usize = 0x1000;
+const UEFI_PAGE_SIZE: usize = 0x1000;
 
 #[entry]
 fn efi_main(image: Handle, mut st: SystemTable<Boot>) -> Status {
@@ -33,16 +35,16 @@ fn efi_main(image: Handle, mut st: SystemTable<Boot>) -> Status {
     let entry_point_addr = load_kernel("ors-kernel.elf", image, &st);
 
     info!("entry_point_addr = 0x{:x}", entry_point_addr);
-    let entry_point: extern "sysv64" fn(&frame_buffer::FrameBuffer) =
+    let entry_point: extern "sysv64" fn(&frame_buffer::FrameBuffer, &memory_map::MemoryMap) =
         unsafe { mem::transmute(entry_point_addr) };
 
     info!("get_frame_buffer_config");
     let frame_buffer = get_frame_buffer(st.boot_services());
 
     info!("exit_boot_services");
-    let _st = exit_boot_services(image, st);
+    let (_st, memory_map) = exit_boot_services(image, st);
 
-    entry_point(&frame_buffer);
+    entry_point(&frame_buffer, &memory_map);
 
     loop {
         hlt!()
@@ -102,7 +104,7 @@ fn load_elf(src: &[u8], st: &SystemTable<Boot>) -> usize {
         .allocate_pages(
             AllocateType::Address(dest_start),
             MemoryType::LOADER_DATA,
-            (dest_end - dest_start + EFI_PAGE_SIZE - 1) / EFI_PAGE_SIZE,
+            (dest_end - dest_start + UEFI_PAGE_SIZE - 1) / UEFI_PAGE_SIZE,
         )
         .expect_success("Failed to allocate pages for kernel");
 
@@ -139,13 +141,40 @@ fn get_frame_buffer(bs: &BootServices) -> frame_buffer::FrameBuffer {
     }
 }
 
-fn exit_boot_services(image: Handle, st: SystemTable<Boot>) -> SystemTable<Runtime> {
+fn exit_boot_services(
+    image: Handle,
+    st: SystemTable<Boot>,
+) -> (SystemTable<Runtime>, memory_map::MemoryMap) {
     let enough_mmap_size =
         st.boot_services().memory_map_size() + 8 * mem::size_of::<MemoryDescriptor>();
-    let mut mmap_buf = vec![0; enough_mmap_size];
-    let (st, _) = st
-        .exit_boot_services(image, &mut mmap_buf[..])
+    let mmap_buf = vec![0; enough_mmap_size].leak();
+    let mut descriptors = Vec::with_capacity(enough_mmap_size);
+    let (st, raw_descriptors) = st
+        .exit_boot_services(image, mmap_buf)
         .expect_success("Failed to exit boot services");
-    mem::forget(mmap_buf);
-    st
+
+    // uefi::MemoryDescriptor -> memory_map::Descriptor
+    for d in raw_descriptors {
+        if is_available_after_exit_boot_services(d.ty) {
+            descriptors.push(memory_map::Descriptor {
+                phys_start: d.phys_start,
+                phys_end: d.phys_start + d.page_count * UEFI_PAGE_SIZE as u64,
+            });
+        }
+    }
+    let memory_map = {
+        let (ptr, len, _) = descriptors.into_raw_parts();
+        memory_map::MemoryMap {
+            descriptors: ptr as *const memory_map::Descriptor,
+            descriptors_len: len as u64,
+        }
+    };
+    (st, memory_map)
+}
+
+fn is_available_after_exit_boot_services(ty: MemoryType) -> bool {
+    matches!(
+        ty,
+        MemoryType::CONVENTIONAL | MemoryType::BOOT_SERVICES_CODE | MemoryType::BOOT_SERVICES_DATA
+    )
 }
