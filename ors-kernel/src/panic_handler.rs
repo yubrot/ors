@@ -1,7 +1,10 @@
+use log::error;
 use ors_common::hlt;
 
 #[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    error!("{}", info);
+
     loop {
         hlt!()
     }
