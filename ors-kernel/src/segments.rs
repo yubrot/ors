@@ -3,16 +3,14 @@
 use core::mem;
 use modular_bitfield::prelude::*;
 
-pub fn initialize() {
-    unsafe {
-        GDT[1].initialize_code_segment(0);
-        GDT[2].initialize_data_segment(0);
-        load_gdt(
-            (GDT.len() * mem::size_of::<SegmentDescriptor>() - 1) as u16,
-            mem::transmute(&GDT[0]),
-        );
-        set_segment_registers(0, 1 << 3, 2 << 3);
-    }
+pub unsafe fn initialize() {
+    GDT[1].initialize_code_segment(0);
+    GDT[2].initialize_data_segment(0);
+    load_gdt(
+        (GDT.len() * mem::size_of::<SegmentDescriptor>() - 1) as u16,
+        mem::transmute(&GDT[0]),
+    );
+    set_segment_registers(0, 1 << 3, 2 << 3);
 }
 
 static mut GDT: [SegmentDescriptor; 3] = [SegmentDescriptor::new(); 3];

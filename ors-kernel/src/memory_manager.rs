@@ -1,7 +1,7 @@
 // A page frame represents a memory section on a physical address,
 // and does not manage the usage of linear addresses.
 
-use core::mem;
+use core::{mem, slice};
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]
 pub struct FrameId(usize);
@@ -104,6 +104,27 @@ impl BitmapMemoryManager {
     pub fn free(&mut self, id: FrameId, num_frames: usize) {
         for i in 0..num_frames {
             self.set_bit(id.offset(i), false);
+        }
+    }
+
+    pub fn initialize(&mut self, mm: &ors_common::memory_map::MemoryMap) {
+        unsafe {
+            let mut phys_available_end = 0;
+            for d in slice::from_raw_parts(mm.descriptors, mm.descriptors_len as usize) {
+                let phys_start = d.phys_start as usize;
+                let phys_end = d.phys_end as usize;
+                if phys_available_end < d.phys_start as usize {
+                    self.mark_allocated_in_bytes(
+                        FrameId::from_physical_address(phys_available_end),
+                        phys_start - phys_available_end,
+                    );
+                }
+                phys_available_end = phys_end;
+            }
+            self.set_memory_range(
+                FrameId::MIN,
+                FrameId::from_physical_address(phys_available_end),
+            );
         }
     }
 }

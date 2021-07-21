@@ -4,5 +4,6 @@ name = "ors-kernel"
 version = "0.1.0"
 
 [dependencies]
+derive-new = {version = "0.5", default-features = false}
 modular-bitfield = "0.11"
 ors-common = {path = "../ors-common"}
