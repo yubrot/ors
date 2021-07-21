@@ -14,8 +14,8 @@ pub trait Buffer {
         font::write_ascii(self, x, y, c, color);
     }
 
-    fn write_string(&self, x: i32, y: i32, s: impl IntoIterator<Item = char>, color: Color) {
-        for (i, c) in s.into_iter().enumerate() {
+    fn write_string(&self, x: i32, y: i32, s: &str, color: Color) {
+        for (i, c) in s.chars().enumerate() {
             self.write_char(x + (font::WIDTH * i) as i32, y, c, color);
         }
     }
@@ -29,9 +29,21 @@ pub trait Buffer {
     }
 }
 
-pub struct RgbFrameBuffer<'a>(pub &'a ors_common::frame_buffer::FrameBuffer);
+impl Buffer for () {
+    fn width(&self) -> i32 {
+        0
+    }
 
-impl<'a> Buffer for RgbFrameBuffer<'a> {
+    fn height(&self) -> i32 {
+        0
+    }
+
+    fn write_pixel(&self, _x: i32, _y: i32, _color: Color) {}
+}
+
+pub struct RgbFrameBuffer(pub ors_common::frame_buffer::FrameBuffer);
+
+impl Buffer for RgbFrameBuffer {
     fn width(&self) -> i32 {
         self.0.resolution.0 as i32
     }
@@ -53,9 +65,9 @@ impl<'a> Buffer for RgbFrameBuffer<'a> {
     }
 }
 
-pub struct BgrFrameBuffer<'a>(pub &'a ors_common::frame_buffer::FrameBuffer);
+pub struct BgrFrameBuffer(pub ors_common::frame_buffer::FrameBuffer);
 
-impl<'a> Buffer for BgrFrameBuffer<'a> {
+impl Buffer for BgrFrameBuffer {
     fn width(&self) -> i32 {
         self.0.resolution.0 as i32
     }

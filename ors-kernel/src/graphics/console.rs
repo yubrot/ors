@@ -9,7 +9,7 @@ pub struct Console<const R: usize, const C: usize> {
 }
 
 impl<const R: usize, const C: usize> Console<R, C> {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             init: 0,
             cursor: (0, 0),
@@ -49,7 +49,7 @@ impl<const R: usize, const C: usize> Console<R, C> {
         self.buf[(self.init + y) % C][x]
     }
 
-    pub fn on<'a, B: Buffer>(
+    pub fn on<'a, B: Buffer + ?Sized>(
         &'a mut self,
         b: &'a B,
         x: i32,
@@ -79,7 +79,7 @@ impl RenderRequirement {
 }
 
 #[derive(new)]
-pub struct ConsoleWriter<'a, B, const R: usize, const C: usize> {
+pub struct ConsoleWriter<'a, B: ?Sized, const R: usize, const C: usize> {
     buffer: &'a B,
     console: &'a mut Console<R, C>,
     x: i32,
@@ -88,7 +88,7 @@ pub struct ConsoleWriter<'a, B, const R: usize, const C: usize> {
     bg: Color,
 }
 
-impl<'a, B: Buffer, const R: usize, const C: usize> ConsoleWriter<'a, B, R, C> {
+impl<'a, B: Buffer + ?Sized, const R: usize, const C: usize> ConsoleWriter<'a, B, R, C> {
     pub fn clear(&mut self) {
         self.buffer.fill_rect(
             self.x,
@@ -117,7 +117,9 @@ impl<'a, B: Buffer, const R: usize, const C: usize> ConsoleWriter<'a, B, R, C> {
     }
 }
 
-impl<'a, B: Buffer, const R: usize, const C: usize> fmt::Write for ConsoleWriter<'a, B, R, C> {
+impl<'a, B: Buffer + ?Sized, const R: usize, const C: usize> fmt::Write
+    for ConsoleWriter<'a, B, R, C>
+{
     fn write_str(&mut self, s: &str) -> fmt::Result {
         for c in s.chars() {
             match self.console.put(c) {

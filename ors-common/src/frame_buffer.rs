@@ -6,7 +6,7 @@ pub enum PixelFormat {
 }
 
 #[repr(C)]
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy)]
 pub struct FrameBuffer {
     pub frame_buffer: *mut u8,
     pub stride: u32,
