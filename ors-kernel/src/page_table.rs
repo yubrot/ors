@@ -30,5 +30,5 @@ pub unsafe fn initialize() {
         }
     }
     let addr = &PML4_TABLE.0[0] as *const u64 as u64;
-    unsafe { asm!("mov cr3, {0}", in(reg) addr) };
+    asm!("mov cr3, {0}", in(reg) addr);
 }

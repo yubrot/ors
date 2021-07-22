@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 // A page frame represents a memory section on a physical address,
 // and does not manage the usage of linear addresses.
 

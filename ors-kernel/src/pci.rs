@@ -1,8 +1,12 @@
+#![allow(dead_code)]
+
 use core::mem;
 use derive_new::new;
 use heapless::Vec;
 use modular_bitfield::prelude::*;
 use ors_common::asm;
+
+// https://wiki.osdev.org/PCI
 
 const CONFIG_ADDRESS: u16 = 0x0cf8;
 const CONFIG_DATA: u16 = 0x0cfc;
@@ -59,26 +63,36 @@ pub enum ScanError {
 }
 
 impl Device {
+    fn read(self, addr: u8) -> u32 {
+        ConfigAddress::at(self.bus, self.device, self.function, addr).write();
+        ConfigData::read().0
+    }
+
+    fn write(self, addr: u8, value: u32) {
+        ConfigAddress::at(self.bus, self.device, self.function, addr).write();
+        ConfigData(value).write();
+    }
+
     pub fn vendor_id(self) -> u16 {
-        ConfigAddress::at(self.bus, self.device, self.function, 0x00).write();
-        ConfigData::read().0 as u16
+        self.read(0x00) as u16
+    }
+
+    pub fn is_vendor_intel(self) -> bool {
+        self.vendor_id() == 0x8086
     }
 
     pub fn device_id(self) -> u16 {
-        ConfigAddress::at(self.bus, self.device, self.function, 0x00).write();
-        (ConfigData::read().0 >> 16) as u16
+        (self.read(0x00) >> 16) as u16
     }
 
     pub fn class_code(self) -> ClassCode {
-        ConfigAddress::at(self.bus, self.device, self.function, 0x08).write();
-        let reg = ConfigData::read().0;
-        ClassCode::new((reg >> 24) as u8, (reg >> 16) as u8, (reg >> 8) as u8)
+        let data = self.read(0x08);
+        ClassCode::new((data >> 24) as u8, (data >> 16) as u8, (data >> 8) as u8)
     }
 
     pub fn header_type(self) -> u8 {
-        ConfigAddress::at(self.bus, self.device, self.function, 0x0C).write();
-        let reg = ConfigData::read().0;
-        (ConfigData::read().0 >> 16) as u8
+        let data = self.read(0x0C);
+        (data >> 16) as u8
     }
 
     pub fn is_single_function(self) -> bool {
@@ -87,9 +101,27 @@ impl Device {
 
     pub fn bus_numbers(self) -> (u8, u8) {
         assert!(self.class_code().is_standard_pci_pci_bridge());
-        ConfigAddress::at(self.bus, self.device, self.function, 0x18).write();
-        let reg = ConfigData::read().0;
-        (reg as u8, (reg >> 8) as u8) // (primary, secondary)
+        let data = self.read(0x18);
+        (data as u8, (data >> 8) as u8) // (primary, secondary)
+    }
+
+    pub fn read_bar(self, index: u8) -> Bar {
+        // https://wiki.osdev.org/PCI#Base_Address_Registers
+        let bar = self.read(base_address_register_address(index));
+        if (bar & 0x1) != 0 {
+            let bar = bar & !0x3;
+            Bar::IoAddress(bar)
+        } else {
+            if (bar & 0x4) != 0 {
+                let bar_lower = (bar as u64) & !0xf;
+                let bar_upper = self.read(base_address_register_address(index + 1));
+                let bar_upper = (bar_upper as u64) << 32;
+                Bar::MemoryAddress(bar_lower | bar_upper)
+            } else {
+                let bar = (bar as u64) & !0xf;
+                Bar::MemoryAddress(bar)
+            }
+        }
     }
 
     pub fn scan<const N: usize>() -> Result<Vec<Self, N>, ScanError> {
@@ -140,11 +172,8 @@ impl Device {
         function: u8,
         dest: &mut Vec<Self, N>,
     ) -> Result<(), ScanError> {
-        if dest.is_full() {
-            Err(ScanError::Full)?;
-        }
         let d = Self::new(bus, device, function);
-        dest.push(d);
+        dest.push(d).map_err(|_| ScanError::Full)?;
 
         if d.class_code().is_standard_pci_pci_bridge() {
             let (_, secondary_bus) = d.bus_numbers();
@@ -152,6 +181,21 @@ impl Device {
         }
 
         Ok(())
+    }
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]
+pub enum Bar {
+    MemoryAddress(u64),
+    IoAddress(u32),
+}
+
+impl Bar {
+    pub fn mmio_base(self) -> usize {
+        match self {
+            Bar::MemoryAddress(addr) => addr as usize,
+            Bar::IoAddress(_) => panic!("Not a memory-mapped I/O address: {:?}", self),
+        }
     }
 }
 
@@ -163,11 +207,16 @@ pub struct ClassCode {
 }
 
 impl ClassCode {
-    pub fn is_usb_3_0(self) -> bool {
-        self.interface == 0x30
-    }
-
     pub fn is_standard_pci_pci_bridge(self) -> bool {
         self.base == 0x06 && self.sub == 0x04
     }
+
+    pub fn is_xhci(self) -> bool {
+        self.base == 0x0c && self.sub == 0x03 && self.interface == 0x30
+    }
+}
+
+fn base_address_register_address(index: u8) -> u8 {
+    assert!(index < 6);
+    0x10 + 4 * index
 }
