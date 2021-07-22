@@ -1,8 +1,3 @@
-#[macro_export]
-macro_rules! hlt {
-    () => {
-        unsafe {
-            asm!("hlt");
-        }
-    };
+pub fn hlt() {
+    unsafe { asm!("hlt") };
 }

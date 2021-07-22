@@ -1,6 +1,5 @@
 #![no_std]
 #![no_main]
-#![feature(asm)]
 #![feature(abi_efiapi)]
 #![feature(vec_into_raw_parts)]
 
@@ -14,7 +13,7 @@ use alloc::vec::Vec;
 use core::{mem, slice};
 use goblin::elf;
 use log::info;
-use ors_common::{frame_buffer, hlt, memory_map};
+use ors_common::{asm, frame_buffer, memory_map};
 use uefi::prelude::*;
 use uefi::proto::console::gop::{GraphicsOutput, PixelFormat};
 use uefi::table::boot::{AllocateType, MemoryDescriptor, MemoryType};
@@ -47,7 +46,7 @@ fn efi_main(image: Handle, mut st: SystemTable<Boot>) -> Status {
     entry_point(&frame_buffer, &memory_map);
 
     loop {
-        hlt!()
+        asm::hlt()
     }
 }
 

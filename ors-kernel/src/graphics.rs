@@ -27,6 +27,10 @@ pub trait Buffer {
             }
         }
     }
+
+    fn clear(&self, color: Color) {
+        self.fill_rect(0, 0, self.width(), self.height(), color);
+    }
 }
 
 impl Buffer for () {

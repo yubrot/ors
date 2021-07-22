@@ -84,6 +84,7 @@ dependencies = [
  "log",
  "modular-bitfield",
  "ors-common",
+ "static_assertions",
 ]
 
 [[package]]

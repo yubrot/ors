@@ -21,7 +21,7 @@ impl<const R: usize, const C: usize> Console<R, C> {
         *self = Self::new();
     }
 
-    pub fn put(&mut self, c: char) -> RenderRequirement {
+    pub fn put(&mut self, c: char) -> UpdateRequirement {
         let (x, y) = self.cursor;
 
         if c == '\n' {
@@ -29,15 +29,15 @@ impl<const R: usize, const C: usize> Console<R, C> {
                 self.buf[self.init] = [' '; R];
                 self.cursor = (0, self.init);
                 self.init = (self.init + 1) % C;
-                RenderRequirement::Everything
+                UpdateRequirement::Everything
             } else {
                 self.cursor = (0, (y + 1) % C);
-                RenderRequirement::None
+                UpdateRequirement::None
             }
         } else if x < R {
             self.buf[y][x] = c;
             self.cursor = (x + 1, y);
-            RenderRequirement::At(x, (y + C - self.init) % C)
+            UpdateRequirement::At(x, (y + C - self.init) % C)
         } else {
             let a = self.put('\n'); // wrapping line feed
             let b = self.put(c);
@@ -61,15 +61,15 @@ impl<const R: usize, const C: usize> Console<R, C> {
     }
 }
 
-pub enum RenderRequirement {
+pub enum UpdateRequirement {
     None,
     Everything,
     At(usize, usize),
 }
 
-impl RenderRequirement {
+impl UpdateRequirement {
     pub fn merge(self, other: Self) -> Self {
-        use RenderRequirement::*;
+        use UpdateRequirement::*;
         match (self, other) {
             (Everything, _) | (_, Everything) => Everything,
             (x @ At(_, _), None) | (None, x @ At(_, _)) => x,
@@ -123,15 +123,15 @@ impl<'a, B: Buffer + ?Sized, const R: usize, const C: usize> fmt::Write
     fn write_str(&mut self, s: &str) -> fmt::Result {
         for c in s.chars() {
             match self.console.put(c) {
-                RenderRequirement::None => {}
-                RenderRequirement::Everything => {
+                UpdateRequirement::None => {}
+                UpdateRequirement::Everything => {
                     for y in 0..C {
                         for x in 0..R {
                             self.write_char_at(x, y);
                         }
                     }
                 }
-                RenderRequirement::At(x, y) => self.write_char_at(x, y),
+                UpdateRequirement::At(x, y) => self.write_char_at(x, y),
             }
         }
 

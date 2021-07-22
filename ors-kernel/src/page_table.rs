@@ -29,9 +29,6 @@ pub unsafe fn initialize() {
             *p = i as u64 * PAGE_SIZE_1G + j as u64 * PAGE_SIZE_2M | 0x83;
         }
     }
-    set_cr3(&PML4_TABLE.0[0] as *const u64 as u64);
-}
-
-extern "C" {
-    fn set_cr3(address: u64);
+    let addr = &PML4_TABLE.0[0] as *const u64 as u64;
+    unsafe { asm!("mov cr3, {0}", in(reg) addr) };
 }

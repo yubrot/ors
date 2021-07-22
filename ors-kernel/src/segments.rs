@@ -8,7 +8,7 @@ pub unsafe fn initialize() {
     GDT[2].initialize_data_segment(0);
     load_gdt(
         (GDT.len() * mem::size_of::<SegmentDescriptor>() - 1) as u16,
-        mem::transmute(&GDT[0]),
+        &GDT[0] as *const SegmentDescriptor as *const u64,
     );
     set_segment_registers(0, 1 << 3, 2 << 3);
 }
