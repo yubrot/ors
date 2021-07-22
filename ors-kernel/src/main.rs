@@ -9,6 +9,7 @@ mod logger;
 mod memory_manager;
 mod page_table;
 mod panic_handler;
+mod pci;
 mod segments;
 
 use core::{mem, ptr};
@@ -33,7 +34,19 @@ pub extern "sysv64" fn kernel_main2(fb: &FrameBuffer, mm: &MemoryMap) {
     info!("Hello, World!");
     info!("1 + 2 = {}", 1 + 2);
 
-    unsafe { global::BUFFER }.write_cursor(50, 50);
+    for d in pci::Device::scan::<32>().unwrap() {
+        info!(
+            "{}.{}.{}: vend {:04x}, class {:02x}.{:02x}.{:02x}, head {:02x}",
+            d.bus,
+            d.device,
+            d.function,
+            d.vendor_id(),
+            d.class_code().base,
+            d.class_code().sub,
+            d.class_code().interface,
+            d.header_type()
+        );
+    }
 
     loop {
         asm::hlt()
