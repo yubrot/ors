@@ -1,5 +1,5 @@
 use log::error;
-use ors_common::asm;
+use x86_64::instructions as asm;
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {

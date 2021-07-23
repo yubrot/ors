@@ -13,11 +13,12 @@ use alloc::vec::Vec;
 use core::{mem, slice};
 use goblin::elf;
 use log::info;
-use ors_common::{asm, frame_buffer, memory_map};
+use ors_common::{frame_buffer, memory_map};
 use uefi::prelude::*;
 use uefi::proto::console::gop::{GraphicsOutput, PixelFormat};
 use uefi::table::boot::{AllocateType, MemoryDescriptor, MemoryType};
 use uefi::table::Runtime;
+use x86_64::instructions as asm;
 
 const UEFI_PAGE_SIZE: usize = 0x1000;
 

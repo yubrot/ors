@@ -1,6 +1,5 @@
 #![no_std]
 #![no_main]
-#![feature(asm)]
 
 #[macro_use]
 mod graphics;
@@ -15,9 +14,9 @@ mod segments;
 use core::{mem, ptr};
 use graphics::{BgrFrameBuffer, Buffer, Color, RgbFrameBuffer};
 use log::info;
-use ors_common::asm;
 use ors_common::frame_buffer::{FrameBuffer, PixelFormat};
 use ors_common::memory_map::MemoryMap;
+use x86_64::instructions as asm;
 
 #[no_mangle]
 pub extern "sysv64" fn kernel_main2(fb: &FrameBuffer, mm: &MemoryMap) {

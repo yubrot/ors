@@ -1,3 +1,10 @@
+mod asm {
+    pub use x86_64::registers::control::{Cr3, Cr3Flags};
+    pub use x86_64::structures::paging::page::Size2MiB;
+    pub use x86_64::structures::paging::PhysFrame;
+    pub use x86_64::PhysAddr;
+}
+
 const PAGE_SIZE_4K: u64 = 4096;
 const PAGE_SIZE_2M: u64 = 512 * PAGE_SIZE_4K;
 const PAGE_SIZE_1G: u64 = 512 * PAGE_SIZE_2M;
@@ -29,6 +36,9 @@ pub unsafe fn initialize() {
             *p = i as u64 * PAGE_SIZE_1G + j as u64 * PAGE_SIZE_2M | 0x83;
         }
     }
-    let addr = &PML4_TABLE.0[0] as *const u64 as u64;
-    asm!("mov cr3, {0}", in(reg) addr);
+    let addr = asm::PhysAddr::new(&PML4_TABLE.0[0] as *const u64 as u64);
+    asm::Cr3::write(
+        asm::PhysFrame::from_start_address(addr).unwrap(),
+        asm::Cr3Flags::empty(),
+    );
 }

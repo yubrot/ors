@@ -10,3 +10,4 @@ log = {version = "0.4", default-features = false}
 ors-common = {path = "../ors-common"}
 uefi = {version = "0.11", features = ["alloc", "logger", "exts"]}
 uefi-services = "0.8"
+x86_64 = "0.14"

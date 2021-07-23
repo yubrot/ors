@@ -1,16 +1,30 @@
 #![allow(dead_code)]
 
+use asm::Segment;
 use core::mem;
 use modular_bitfield::prelude::*;
+
+mod asm {
+    pub use x86_64::addr::VirtAddr;
+    pub use x86_64::instructions::segmentation::{Segment, CS, DS, ES, FS, GS, SS};
+    pub use x86_64::instructions::tables::lgdt;
+    pub use x86_64::structures::gdt::SegmentSelector;
+    pub use x86_64::structures::DescriptorTablePointer;
+}
 
 pub unsafe fn initialize() {
     GDT[1].initialize_code_segment(0);
     GDT[2].initialize_data_segment(0);
-    load_gdt(
-        (GDT.len() * mem::size_of::<SegmentDescriptor>() - 1) as u16,
-        &GDT[0] as *const SegmentDescriptor as *const u64,
-    );
-    set_segment_registers(0, 1 << 3, 2 << 3);
+    asm::lgdt(&asm::DescriptorTablePointer {
+        limit: (GDT.len() * mem::size_of::<SegmentDescriptor>() - 1) as u16,
+        base: asm::VirtAddr::new(&GDT[0] as *const SegmentDescriptor as u64),
+    });
+    asm::DS::set_reg(asm::SegmentSelector(0));
+    asm::ES::set_reg(asm::SegmentSelector(0));
+    asm::FS::set_reg(asm::SegmentSelector(0));
+    asm::GS::set_reg(asm::SegmentSelector(0));
+    asm::CS::set_reg(asm::SegmentSelector(1 << 3));
+    asm::SS::set_reg(asm::SegmentSelector(2 << 3));
 }
 
 static mut GDT: [SegmentDescriptor; 3] = [SegmentDescriptor::new(); 3];
@@ -53,9 +67,4 @@ impl SegmentDescriptor {
         self.set_long_mode(0); // reserved
         self.set_default_operation_size(1); // ignored, but set to 1 to make compatible with sycall
     }
-}
-
-extern "C" {
-    fn load_gdt(limit: u16, offset: *const u64);
-    fn set_segment_registers(ds_es_fs_gs: u16, cs: u16, ss: u16);
 }

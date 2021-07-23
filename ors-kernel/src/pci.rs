@@ -4,12 +4,16 @@ use core::mem;
 use derive_new::new;
 use heapless::Vec;
 use modular_bitfield::prelude::*;
-use ors_common::asm;
+
+mod asm {
+    pub use x86_64::instructions::hlt;
+    pub use x86_64::instructions::port::{Port, PortWriteOnly};
+}
 
 // https://wiki.osdev.org/PCI
 
-const CONFIG_ADDRESS: u16 = 0x0cf8;
-const CONFIG_DATA: u16 = 0x0cfc;
+static mut CONFIG_ADDRESS: asm::PortWriteOnly<u32> = asm::PortWriteOnly::new(0x0cf8);
+static mut CONFIG_DATA: asm::Port<u32> = asm::Port::new(0x0cfc);
 
 #[bitfield(bits = 32)]
 #[derive(Debug, Clone, Copy)]
@@ -34,7 +38,7 @@ impl ConfigAddress {
     }
 
     fn write(self) {
-        asm::io_out(CONFIG_ADDRESS, unsafe { mem::transmute(self) })
+        unsafe { CONFIG_ADDRESS.write(mem::transmute(self)) }
     }
 }
 
@@ -43,11 +47,11 @@ struct ConfigData(u32);
 
 impl ConfigData {
     fn read() -> Self {
-        Self(asm::io_in(CONFIG_DATA))
+        ConfigData(unsafe { CONFIG_DATA.read() })
     }
 
     fn write(self) {
-        asm::io_out(CONFIG_DATA, self.0);
+        unsafe { CONFIG_DATA.write(self.0) }
     }
 }
 
@@ -110,8 +114,8 @@ impl Device {
         // https://wiki.osdev.org/PCI#Base_Address_Registers
         let bar = self.read(base_address_register_address(index));
         if (bar & 0x1) != 0 {
-            let bar = bar & !0x3;
-            Bar::IoAddress(bar)
+            let bar = (bar & !0x3) as u16;
+            Bar::IoPort(asm::Port::new(bar))
         } else {
             if (bar & 0x4) != 0 {
                 let bar_lower = (bar as u64) & !0xf;
@@ -185,17 +189,17 @@ impl Device {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Bar {
     MemoryAddress(u64),
-    IoAddress(u32),
+    IoPort(asm::Port<u32>),
 }
 
 impl Bar {
     pub fn mmio_base(self) -> usize {
         match self {
             Bar::MemoryAddress(addr) => addr as usize,
-            Bar::IoAddress(_) => panic!("Not a memory-mapped I/O address: {:?}", self),
+            Bar::IoPort(_) => panic!("Not a memory-mapped I/O address: {:?}", self),
         }
     }
 }
