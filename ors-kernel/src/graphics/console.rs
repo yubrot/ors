@@ -17,7 +17,6 @@ impl<const R: usize, const C: usize> Console<R, C> {
         }
     }
 
-    #[allow(dead_code)]
     pub fn clear(&mut self) {
         *self = Self::new();
     }
@@ -84,7 +83,6 @@ pub struct ConsoleWriter<'a, B: ?Sized, const R: usize, const C: usize> {
 }
 
 impl<'a, B: FrameBuffer + ?Sized, const R: usize, const C: usize> ConsoleWriter<'a, B, R, C> {
-    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.fb.fill_rect(
             self.options.x,
