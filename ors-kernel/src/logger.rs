@@ -16,7 +16,7 @@ impl log::Log for KernelLogger {
 
     fn log(&self, record: &log::Record) {
         writeln!(
-            global::console().writer(
+            global::default_console().writer(
                 &mut **global::frame_buffer(),
                 ConsoleWriteOptions::new(0, 0, Color::WHITE, Color::BLACK),
             ),
@@ -25,6 +25,7 @@ impl log::Log for KernelLogger {
             record.args()
         )
         .unwrap();
+        writeln!(global::default_serial_port(), "{}", record.args()).unwrap();
     }
 
     fn flush(&self) {}

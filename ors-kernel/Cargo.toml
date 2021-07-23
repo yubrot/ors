@@ -11,4 +11,5 @@ modular-bitfield = "0.11"
 ors-common = {path = "../ors-common"}
 spin = "0.9"
 static_assertions = "1"
+uart_16550 = "0.2"
 x86_64 = "0.14"
