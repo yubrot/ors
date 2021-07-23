@@ -32,24 +32,6 @@ pub extern "sysv64" fn kernel_main2(fb: &FrameBuffer, mm: &MemoryMap) {
     info!("Hello, World!");
     info!("1 + 2 = {}", 1 + 2);
 
-    if let Some(xhc) = {
-        let mut intel_xhc = None;
-        let mut xhc = None;
-        for d in pci::Device::scan::<32>().unwrap() {
-            if d.class_code().is_xhci() {
-                if d.is_vendor_intel() {
-                    intel_xhc = Some(d);
-                    break;
-                }
-                xhc = Some(d);
-            }
-        }
-        intel_xhc.or(xhc)
-    } {
-        info!("Detected xHC: {}.{}.{}", xhc.bus, xhc.device, xhc.function);
-        info!("memory-mapped I/O base: {:x}", xhc.read_bar(0).mmio_base());
-    }
-
     loop {
         asm::hlt()
     }

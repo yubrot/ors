@@ -2,7 +2,5 @@
 **/*.rs.bk
 .vscode/
 
-/ors-loader.efi
-/ors-kernel.elf
-/mnt
-/disk.img
+mnt
+disk.img
