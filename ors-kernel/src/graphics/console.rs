@@ -1,4 +1,4 @@
-use super::{font, Buffer, Color};
+use super::{font, Color, FrameBuffer};
 use core::fmt;
 use derive_new::new;
 
@@ -50,15 +50,12 @@ impl<const R: usize, const C: usize> Console<R, C> {
         self.buf[(self.init + y) % C][x]
     }
 
-    pub fn on<'a, B: Buffer + ?Sized>(
+    pub fn writer<'a, B: FrameBuffer + ?Sized>(
         &'a mut self,
-        b: &'a mut B,
-        x: i32,
-        y: i32,
-        fg: Color,
-        bg: Color,
+        fb: &'a mut B,
+        options: ConsoleWriteOptions,
     ) -> ConsoleWriter<'a, B, R, C> {
-        ConsoleWriter::new(b, self, x, y, fg, bg)
+        ConsoleWriter::new(self, fb, options)
     }
 }
 
@@ -81,45 +78,42 @@ impl UpdateRequirement {
 
 #[derive(new)]
 pub struct ConsoleWriter<'a, B: ?Sized, const R: usize, const C: usize> {
-    buffer: &'a mut B,
     console: &'a mut Console<R, C>,
-    x: i32,
-    y: i32,
-    fg: Color,
-    bg: Color,
+    fb: &'a mut B,
+    options: ConsoleWriteOptions,
 }
 
-impl<'a, B: Buffer + ?Sized, const R: usize, const C: usize> ConsoleWriter<'a, B, R, C> {
+impl<'a, B: FrameBuffer + ?Sized, const R: usize, const C: usize> ConsoleWriter<'a, B, R, C> {
     #[allow(dead_code)]
     pub fn clear(&mut self) {
-        self.buffer.fill_rect(
-            self.x,
-            self.y,
+        self.fb.fill_rect(
+            self.options.x,
+            self.options.y,
             (R * font::WIDTH) as i32,
             (C * font::HEIGHT) as i32,
-            self.bg,
+            self.options.bg,
         );
         self.console.clear();
     }
 
     pub fn write_char_at(&mut self, x: usize, y: usize) {
-        self.buffer.fill_rect(
-            self.x + (x * font::WIDTH) as i32,
-            self.y + (y * font::HEIGHT) as i32,
+        self.fb.fill_rect(
+            self.options.x + (x * font::WIDTH) as i32,
+            self.options.y + (y * font::HEIGHT) as i32,
             font::WIDTH as i32,
             font::HEIGHT as i32,
-            self.bg,
+            self.options.bg,
         );
-        self.buffer.write_char(
-            self.x + (x * font::WIDTH) as i32,
-            self.y + (y * font::HEIGHT) as i32,
+        self.fb.write_char(
+            self.options.x + (x * font::WIDTH) as i32,
+            self.options.y + (y * font::HEIGHT) as i32,
             self.console.char_at(x, y),
-            self.fg,
+            self.options.fg,
         );
     }
 }
 
-impl<'a, B: Buffer + ?Sized, const R: usize, const C: usize> fmt::Write
+impl<'a, B: FrameBuffer + ?Sized, const R: usize, const C: usize> fmt::Write
     for ConsoleWriter<'a, B, R, C>
 {
     fn write_str(&mut self, s: &str) -> fmt::Result {
@@ -139,4 +133,12 @@ impl<'a, B: Buffer + ?Sized, const R: usize, const C: usize> fmt::Write
 
         Ok(())
     }
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, new)]
+pub struct ConsoleWriteOptions {
+    x: i32,
+    y: i32,
+    fg: Color,
+    bg: Color,
 }

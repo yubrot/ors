@@ -3,9 +3,9 @@ mod console;
 mod font;
 
 pub use color::Color;
-pub use console::Console;
+pub use console::{Console, ConsoleWriteOptions, ConsoleWriter};
 
-pub trait Buffer {
+pub trait FrameBuffer {
     fn width(&self) -> i32;
     fn height(&self) -> i32;
     fn write_pixel(&mut self, x: i32, y: i32, color: Color);
@@ -33,7 +33,7 @@ pub trait Buffer {
     }
 }
 
-impl Buffer for () {
+impl FrameBuffer for () {
     fn width(&self) -> i32 {
         0
     }
@@ -51,7 +51,7 @@ unsafe impl Send for RgbFrameBuffer {}
 
 unsafe impl Sync for RgbFrameBuffer {}
 
-impl Buffer for RgbFrameBuffer {
+impl FrameBuffer for RgbFrameBuffer {
     fn width(&self) -> i32 {
         self.0.resolution.0 as i32
     }
@@ -79,7 +79,7 @@ unsafe impl Send for BgrFrameBuffer {}
 
 unsafe impl Sync for BgrFrameBuffer {}
 
-impl Buffer for BgrFrameBuffer {
+impl FrameBuffer for BgrFrameBuffer {
     fn width(&self) -> i32 {
         self.0.resolution.0 as i32
     }

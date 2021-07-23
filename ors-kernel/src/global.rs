@@ -5,11 +5,11 @@ use heapless::Vec;
 use spin::{Mutex, MutexGuard, Once};
 
 pub type Devices = Vec<Device, 32>;
-pub type Buffer = &'static mut (dyn graphics::Buffer + Send + Sync);
+pub type FrameBuffer = &'static mut (dyn graphics::FrameBuffer + Send + Sync);
 pub type Console = graphics::Console<80, 25>;
 
 static MEMORY_MANAGER: Mutex<BitmapMemoryManager> = Mutex::new(BitmapMemoryManager::new());
-static BUFFER: Once<Mutex<Buffer>> = Once::new();
+static FRAME_BUFFER: Once<Mutex<FrameBuffer>> = Once::new();
 static CONSOLE: Mutex<Console> = Mutex::new(Console::new());
 static DEVICES: Once<Devices> = Once::new();
 
@@ -17,12 +17,12 @@ pub fn memory_manager() -> MutexGuard<'static, BitmapMemoryManager> {
     MEMORY_MANAGER.lock()
 }
 
-pub fn buffer() -> MutexGuard<'static, Buffer> {
-    BUFFER.wait().lock()
+pub fn frame_buffer() -> MutexGuard<'static, FrameBuffer> {
+    FRAME_BUFFER.wait().lock()
 }
 
-pub fn initialize_buffer(buffer: Buffer) {
-    BUFFER.call_once(move || Mutex::new(buffer));
+pub fn initialize_frame_buffer(fb: FrameBuffer) {
+    FRAME_BUFFER.call_once(move || Mutex::new(fb));
 }
 
 pub fn console() -> MutexGuard<'static, Console> {

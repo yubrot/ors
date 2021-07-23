@@ -1,5 +1,5 @@
 use super::global;
-use super::graphics::Color;
+use super::graphics::{Color, ConsoleWriteOptions};
 use core::fmt::Write;
 
 pub fn initialize() {
@@ -16,7 +16,10 @@ impl log::Log for KernelLogger {
 
     fn log(&self, record: &log::Record) {
         writeln!(
-            global::console().on(&mut **global::buffer(), 0, 0, Color::WHITE, Color::BLACK),
+            global::console().writer(
+                &mut **global::frame_buffer(),
+                ConsoleWriteOptions::new(0, 0, Color::WHITE, Color::BLACK),
+            ),
             "{}: {}",
             record.level(),
             record.args()

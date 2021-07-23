@@ -1,11 +1,11 @@
-use super::{Buffer, Color};
+use super::{Color, FrameBuffer};
 
 pub const WIDTH: usize = 8;
 pub const HEIGHT: usize = 16;
 
 static ASCII_FONT: &[u8; 4096] = include_bytes!("ascii.bin");
 
-pub fn write_ascii<B: Buffer + ?Sized>(b: &mut B, x: i32, y: i32, mut c: char, color: Color) {
+pub fn write_ascii<B: FrameBuffer + ?Sized>(b: &mut B, x: i32, y: i32, mut c: char, color: Color) {
     if !c.is_ascii() {
         c = '?';
     }
