@@ -24,6 +24,7 @@ struct ConfigAddress {
 
 impl ConfigAddress {
     fn at(bus: u8, device: u8, function: u8, reg: u8) -> Self {
+        assert_eq!(reg & 0x03, 0);
         Self::new()
             .with_enabled(1)
             .with_bus_number(bus)
@@ -91,7 +92,7 @@ impl Device {
     }
 
     pub fn header_type(self) -> u8 {
-        let data = self.read(0x0C);
+        let data = self.read(0x0c);
         (data >> 16) as u8
     }
 
@@ -100,7 +101,7 @@ impl Device {
     }
 
     pub fn bus_numbers(self) -> (u8, u8) {
-        assert!(self.class_code().is_standard_pci_pci_bridge());
+        assert!(self.class_code().is_standard_pci_to_pci_bridge());
         let data = self.read(0x18);
         (data as u8, (data >> 8) as u8) // (primary, secondary)
     }
@@ -175,7 +176,7 @@ impl Device {
         let d = Self::new(bus, device, function);
         dest.push(d).map_err(|_| ScanError::Full)?;
 
-        if d.class_code().is_standard_pci_pci_bridge() {
+        if d.class_code().is_standard_pci_to_pci_bridge() {
             let (_, secondary_bus) = d.bus_numbers();
             Self::scan_bus(secondary_bus, dest)?;
         }
@@ -207,7 +208,7 @@ pub struct ClassCode {
 }
 
 impl ClassCode {
-    pub fn is_standard_pci_pci_bridge(self) -> bool {
+    pub fn is_standard_pci_to_pci_bridge(self) -> bool {
         self.base == 0x06 && self.sub == 0x04
     }
 

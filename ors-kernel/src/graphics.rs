@@ -8,19 +8,19 @@ pub use console::Console;
 pub trait Buffer {
     fn width(&self) -> i32;
     fn height(&self) -> i32;
-    fn write_pixel(&self, x: i32, y: i32, color: Color);
+    fn write_pixel(&mut self, x: i32, y: i32, color: Color);
 
-    fn write_char(&self, x: i32, y: i32, c: char, color: Color) {
+    fn write_char(&mut self, x: i32, y: i32, c: char, color: Color) {
         font::write_ascii(self, x, y, c, color);
     }
 
-    fn write_string(&self, x: i32, y: i32, s: &str, color: Color) {
+    fn write_string(&mut self, x: i32, y: i32, s: &str, color: Color) {
         for (i, c) in s.chars().enumerate() {
             self.write_char(x + (font::WIDTH * i) as i32, y, c, color);
         }
     }
 
-    fn fill_rect(&self, x: i32, y: i32, w: i32, h: i32, color: Color) {
+    fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: Color) {
         for dx in 0..w {
             for dy in 0..h {
                 self.write_pixel(x + dx, y + dy, color);
@@ -28,7 +28,7 @@ pub trait Buffer {
         }
     }
 
-    fn clear(&self, color: Color) {
+    fn clear(&mut self, color: Color) {
         self.fill_rect(0, 0, self.width(), self.height(), color);
     }
 }
@@ -42,10 +42,14 @@ impl Buffer for () {
         0
     }
 
-    fn write_pixel(&self, _x: i32, _y: i32, _color: Color) {}
+    fn write_pixel(&mut self, _x: i32, _y: i32, _color: Color) {}
 }
 
 pub struct RgbFrameBuffer(pub ors_common::frame_buffer::FrameBuffer);
+
+unsafe impl Send for RgbFrameBuffer {}
+
+unsafe impl Sync for RgbFrameBuffer {}
 
 impl Buffer for RgbFrameBuffer {
     fn width(&self) -> i32 {
@@ -56,7 +60,7 @@ impl Buffer for RgbFrameBuffer {
         self.0.resolution.1 as i32
     }
 
-    fn write_pixel(&self, x: i32, y: i32, color: Color) {
+    fn write_pixel(&mut self, x: i32, y: i32, color: Color) {
         if x < 0 || self.width() <= x || y < 0 || self.height() <= y {
             return;
         }
@@ -71,6 +75,10 @@ impl Buffer for RgbFrameBuffer {
 
 pub struct BgrFrameBuffer(pub ors_common::frame_buffer::FrameBuffer);
 
+unsafe impl Send for BgrFrameBuffer {}
+
+unsafe impl Sync for BgrFrameBuffer {}
+
 impl Buffer for BgrFrameBuffer {
     fn width(&self) -> i32 {
         self.0.resolution.0 as i32
@@ -80,7 +88,7 @@ impl Buffer for BgrFrameBuffer {
         self.0.resolution.1 as i32
     }
 
-    fn write_pixel(&self, x: i32, y: i32, color: Color) {
+    fn write_pixel(&mut self, x: i32, y: i32, color: Color) {
         if x < 0 || self.width() <= x || y < 0 || self.height() <= y {
             return;
         }

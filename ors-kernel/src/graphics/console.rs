@@ -52,7 +52,7 @@ impl<const R: usize, const C: usize> Console<R, C> {
 
     pub fn on<'a, B: Buffer + ?Sized>(
         &'a mut self,
-        b: &'a B,
+        b: &'a mut B,
         x: i32,
         y: i32,
         fg: Color,
@@ -81,7 +81,7 @@ impl UpdateRequirement {
 
 #[derive(new)]
 pub struct ConsoleWriter<'a, B: ?Sized, const R: usize, const C: usize> {
-    buffer: &'a B,
+    buffer: &'a mut B,
     console: &'a mut Console<R, C>,
     x: i32,
     y: i32,

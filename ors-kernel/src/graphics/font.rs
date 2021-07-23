@@ -5,7 +5,7 @@ pub const HEIGHT: usize = 16;
 
 static ASCII_FONT: &[u8; 4096] = include_bytes!("ascii.bin");
 
-pub fn write_ascii<B: Buffer + ?Sized>(b: &B, x: i32, y: i32, mut c: char, color: Color) {
+pub fn write_ascii<B: Buffer + ?Sized>(b: &mut B, x: i32, y: i32, mut c: char, color: Color) {
     if !c.is_ascii() {
         c = '?';
     }

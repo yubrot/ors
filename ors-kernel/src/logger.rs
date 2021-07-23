@@ -16,7 +16,7 @@ impl log::Log for KernelLogger {
 
     fn log(&self, record: &log::Record) {
         writeln!(
-            unsafe { global::CONSOLE.on(global::BUFFER, 0, 0, Color::WHITE, Color::BLACK) },
+            global::console().on(&mut **global::buffer(), 0, 0, Color::WHITE, Color::BLACK),
             "{}: {}",
             record.level(),
             record.args()

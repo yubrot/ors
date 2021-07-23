@@ -21,16 +21,14 @@ use ors_common::memory_map::MemoryMap;
 
 #[no_mangle]
 pub extern "sysv64" fn kernel_main2(fb: &FrameBuffer, mm: &MemoryMap) {
-    unsafe {
-        segments::initialize();
-        page_table::initialize();
-        global::MEMORY_MANAGER.initialize(mm);
-        global::BUFFER = prepare_buffer(*fb);
-        global::BUFFER.clear(Color::BLACK);
-    };
-
+    unsafe { segments::initialize() };
+    unsafe { page_table::initialize() };
+    global::memory_manager().initialize(mm);
+    global::initialize_buffer(unsafe { prepare_buffer(*fb) });
+    global::initialize_devices(pci::Device::scan::<32>().unwrap());
     logger::initialize();
 
+    global::buffer().clear(Color::BLACK);
     info!("Hello, World!");
     info!("1 + 2 = {}", 1 + 2);
 
@@ -57,7 +55,7 @@ pub extern "sysv64" fn kernel_main2(fb: &FrameBuffer, mm: &MemoryMap) {
     }
 }
 
-unsafe fn prepare_buffer(fb: FrameBuffer) -> &'static dyn Buffer {
+unsafe fn prepare_buffer(fb: FrameBuffer) -> &'static mut (dyn Buffer + Send + Sync) {
     static_assertions::assert_eq_size!(RgbFrameBuffer, BgrFrameBuffer);
     const PAYLOAD_SIZE: usize = mem::size_of::<RgbFrameBuffer>();
     static mut PAYLOAD: [u8; PAYLOAD_SIZE] = [0; PAYLOAD_SIZE];
