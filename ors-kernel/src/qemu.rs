@@ -1,8 +1,8 @@
-mod asm {
+mod x64 {
     pub use x86_64::instructions::port::Port;
 }
 
-static mut QEMU_DEBUG_EXIT: asm::Port<u32> = asm::Port::new(0xf4);
+static mut QEMU_DEBUG_EXIT: x64::Port<u32> = x64::Port::new(0xf4);
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 #[repr(u32)]

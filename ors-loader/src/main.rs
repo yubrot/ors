@@ -18,7 +18,7 @@ use uefi::prelude::*;
 use uefi::proto::console::gop::{GraphicsOutput, PixelFormat};
 use uefi::table::boot::{AllocateType, MemoryDescriptor, MemoryType};
 use uefi::table::Runtime;
-use x86_64::instructions as asm;
+use x86_64::instructions as x64;
 
 const UEFI_PAGE_SIZE: usize = 0x1000;
 
@@ -47,7 +47,7 @@ fn efi_main(image: Handle, mut st: SystemTable<Boot>) -> Status {
     entry_point(&frame_buffer, &memory_map);
 
     loop {
-        asm::hlt()
+        x64::hlt()
     }
 }
 

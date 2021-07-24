@@ -4,15 +4,15 @@ use bit_field::BitField;
 use derive_new::new;
 use heapless::Vec;
 
-mod asm {
+mod x64 {
     pub use x86_64::instructions::hlt;
     pub use x86_64::instructions::port::{Port, PortWriteOnly};
 }
 
 // https://wiki.osdev.org/PCI
 
-static mut CONFIG_ADDRESS: asm::PortWriteOnly<u32> = asm::PortWriteOnly::new(0x0cf8);
-static mut CONFIG_DATA: asm::Port<u32> = asm::Port::new(0x0cfc);
+static mut CONFIG_ADDRESS: x64::PortWriteOnly<u32> = x64::PortWriteOnly::new(0x0cf8);
+static mut CONFIG_DATA: x64::Port<u32> = x64::Port::new(0x0cfc);
 
 #[derive(Debug, Clone, Copy)]
 struct ConfigAddress(u32);
@@ -106,7 +106,7 @@ impl Device {
         let bar = self.read(base_address_register_address(index));
         if (bar & 0x1) != 0 {
             let bar = (bar & !0x3) as u16;
-            Bar::IoPort(asm::Port::new(bar))
+            Bar::IoPort(x64::Port::new(bar))
         } else {
             if (bar & 0x4) != 0 {
                 let bar_lower = (bar as u64) & !0xf;
@@ -183,7 +183,7 @@ impl Device {
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Bar {
     MemoryAddress(u64),
-    IoPort(asm::Port<u32>),
+    IoPort(x64::Port<u32>),
 }
 
 impl Bar {

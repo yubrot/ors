@@ -1,11 +1,13 @@
 #![no_std]
 #![no_main]
 #![feature(custom_test_frameworks)]
+#![feature(abi_x86_interrupt)]
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
 pub mod global;
 pub mod graphics;
+pub mod interrupts;
 pub mod logger;
 pub mod memory_manager;
 pub mod page_table;
@@ -16,12 +18,13 @@ pub mod segmentation;
 use log::{error, info};
 use ors_common::frame_buffer::FrameBuffer as RawFrameBuffer;
 use ors_common::memory_map::MemoryMap;
-use x86_64::instructions as asm;
+use x86_64::instructions as x64;
 
 #[no_mangle]
 pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap) {
     unsafe { segmentation::initialize() };
     unsafe { page_table::initialize() };
+    unsafe { interrupts::initialize() };
     global::memory_manager().initialize(mm);
     global::initialize_frame_buffer(unsafe {
         static mut PAYLOAD: graphics::FrameBufferPayload = graphics::FrameBufferPayload::new();
@@ -36,10 +39,13 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap) {
     test_main();
 
     info!("Hello, World!");
+
+    x86_64::instructions::interrupts::int3();
+
     info!("1 + 2 = {}", 1 + 2);
 
     loop {
-        asm::hlt()
+        x64::hlt()
     }
 }
 
@@ -51,7 +57,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     qemu::exit(qemu::ExitCode::Failure);
 
     loop {
-        asm::hlt()
+        x64::hlt()
     }
 }
 
