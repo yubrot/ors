@@ -1,9 +1,8 @@
 #![allow(dead_code)]
 
-use core::mem;
+use bit_field::BitField;
 use derive_new::new;
 use heapless::Vec;
-use modular_bitfield::prelude::*;
 
 mod asm {
     pub use x86_64::instructions::hlt;
@@ -15,30 +14,22 @@ mod asm {
 static mut CONFIG_ADDRESS: asm::PortWriteOnly<u32> = asm::PortWriteOnly::new(0x0cf8);
 static mut CONFIG_DATA: asm::Port<u32> = asm::Port::new(0x0cfc);
 
-#[bitfield(bits = 32)]
 #[derive(Debug, Clone, Copy)]
-struct ConfigAddress {
-    register_offset: B8,
-    function_number: B3,
-    device_number: B5,
-    bus_number: B8,
-    reserved: B7,
-    enabled: B1,
-}
+struct ConfigAddress(u32);
 
 impl ConfigAddress {
-    fn at(bus: u8, device: u8, function: u8, reg: u8) -> Self {
-        assert_eq!(reg & 0x03, 0);
-        Self::new()
-            .with_enabled(1)
-            .with_bus_number(bus)
-            .with_device_number(device)
-            .with_function_number(function)
-            .with_register_offset(reg)
+    fn new(bus: u8, device: u8, function: u8, reg: u8) -> Self {
+        let mut value = 0;
+        value.set_bits(0..8, reg as u32);
+        value.set_bits(8..11, function as u32);
+        value.set_bits(11..16, device as u32);
+        value.set_bits(16..24, bus as u32);
+        value.set_bit(31, true);
+        Self(value)
     }
 
     fn write(self) {
-        unsafe { CONFIG_ADDRESS.write(mem::transmute(self)) }
+        unsafe { CONFIG_ADDRESS.write(self.0) }
     }
 }
 
@@ -69,12 +60,12 @@ pub enum ScanError {
 
 impl Device {
     fn read(self, addr: u8) -> u32 {
-        ConfigAddress::at(self.bus, self.device, self.function, addr).write();
+        ConfigAddress::new(self.bus, self.device, self.function, addr).write();
         ConfigData::read().0
     }
 
     fn write(self, addr: u8, value: u32) {
-        ConfigAddress::at(self.bus, self.device, self.function, addr).write();
+        ConfigAddress::new(self.bus, self.device, self.function, addr).write();
         ConfigData(value).write();
     }
 
