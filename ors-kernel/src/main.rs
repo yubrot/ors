@@ -39,9 +39,6 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap) {
     test_main();
 
     info!("Hello, World!");
-
-    x86_64::instructions::interrupts::int3();
-
     info!("1 + 2 = {}", 1 + 2);
 
     loop {
@@ -69,13 +66,4 @@ fn test_runner(tests: &[&dyn Fn()]) {
     }
 
     qemu::exit(qemu::ExitCode::Success);
-}
-
-#[cfg(test)]
-mod tests {
-    #[test_case]
-    fn trivial_test() {
-        log::info!("Running trivial test");
-        assert_eq!(1 + 1, 2);
-    }
 }
