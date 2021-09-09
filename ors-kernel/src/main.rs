@@ -9,9 +9,9 @@ pub mod global;
 pub mod graphics;
 pub mod interrupts;
 pub mod logger;
-pub mod memory_manager;
 pub mod page_table;
 pub mod pci;
+pub mod phys_memory;
 pub mod qemu;
 pub mod segmentation;
 
@@ -25,7 +25,7 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap) {
     unsafe { segmentation::initialize() };
     unsafe { page_table::initialize() };
     unsafe { interrupts::initialize() };
-    global::memory_manager().initialize(mm);
+    global::phys_memory_manager().initialize(mm);
     global::initialize_frame_buffer(unsafe {
         static mut PAYLOAD: graphics::FrameBufferPayload = graphics::FrameBufferPayload::new();
         graphics::prepare_frame_buffer(*fb, &mut PAYLOAD)

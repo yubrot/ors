@@ -1,9 +1,10 @@
-// A page frame represents a memory section on a physical address,
-// and does not manage the usage of linear addresses.
+// A frame represents a memory section on a physical address,
+// and does not manage the usage of linear (virtual) addresses.
 
 use core::mem;
 
 mod x64 {
+    pub use x86_64::structures::paging::PhysFrame;
     pub use x86_64::PhysAddr;
 }
 
@@ -11,7 +12,7 @@ mod x64 {
 pub struct FrameId(usize);
 
 impl FrameId {
-    pub fn from_phys_addr(addr: x64::PhysAddr) -> Self {
+    fn from_phys_addr(addr: x64::PhysAddr) -> Self {
         Self(addr.as_u64() as usize / BYTES_PER_FRAME)
     }
 
@@ -19,12 +20,16 @@ impl FrameId {
         x64::PhysAddr::new((self.0 * BYTES_PER_FRAME) as u64)
     }
 
-    pub fn offset(self, offset: usize) -> Self {
+    pub fn phys_frame(self) -> x64::PhysFrame {
+        x64::PhysFrame::from_start_address(self.phys_addr()).unwrap()
+    }
+
+    fn offset(self, offset: usize) -> Self {
         Self(self.0 + offset)
     }
 
-    pub const MIN: Self = Self(1); // TODO: Why 1 instead of 0?
-    pub const MAX: Self = Self(FRAME_COUNT);
+    const MIN: Self = Self(1); // TODO: Why 1 instead of 0?
+    const MAX: Self = Self(FRAME_COUNT);
 }
 
 const MAX_PHYSICAL_MEMORY_BYTES: usize = 128 * 1024 * 1024 * 1024; // 128GiB
