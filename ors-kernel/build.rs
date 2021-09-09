@@ -13,8 +13,7 @@ fn main() {
         path
     };
     Command::new("nasm")
-        .args(&["-f", "elf64", "-o", out_asm.to_str().unwrap()])
-        .arg("asm.s")
+        .args(&["-f", "elf64", "-o", out_asm.to_str().unwrap(), "asm.s"])
         .status()
         .unwrap();
     Command::new("ar")
