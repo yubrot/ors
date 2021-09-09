@@ -3,16 +3,20 @@
 
 use core::mem;
 
+mod x64 {
+    pub use x86_64::PhysAddr;
+}
+
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]
 pub struct FrameId(usize);
 
 impl FrameId {
-    pub fn from_physical_address(address: usize) -> Self {
-        Self(address / BYTES_PER_FRAME)
+    pub fn from_phys_addr(addr: x64::PhysAddr) -> Self {
+        Self(addr.as_u64() as usize / BYTES_PER_FRAME)
     }
 
-    pub fn frame_ptr(self) -> *const u8 {
-        (self.0 * BYTES_PER_FRAME) as *const u8
+    pub fn phys_addr(self) -> x64::PhysAddr {
+        x64::PhysAddr::new((self.0 * BYTES_PER_FRAME) as u64)
     }
 
     pub fn offset(self, offset: usize) -> Self {
@@ -24,7 +28,7 @@ impl FrameId {
 }
 
 const MAX_PHYSICAL_MEMORY_BYTES: usize = 128 * 1024 * 1024 * 1024; // 128GiB
-const BYTES_PER_FRAME: usize = 4096; // 4KiB
+const BYTES_PER_FRAME: usize = 4096; // 4KiB (= 2 ** 12)
 const FRAME_COUNT: usize = MAX_PHYSICAL_MEMORY_BYTES / BYTES_PER_FRAME;
 
 type MapLine = usize;
@@ -114,7 +118,7 @@ impl BitmapMemoryManager {
             let phys_end = d.phys_end as usize;
             if phys_available_end < d.phys_start as usize {
                 self.mark_allocated_in_bytes(
-                    FrameId::from_physical_address(phys_available_end),
+                    FrameId::from_phys_addr(x64::PhysAddr::new(phys_available_end as u64)),
                     phys_start - phys_available_end,
                 );
             }
@@ -122,7 +126,7 @@ impl BitmapMemoryManager {
         }
         self.set_memory_range(
             FrameId::MIN,
-            FrameId::from_physical_address(phys_available_end),
+            FrameId::from_phys_addr(x64::PhysAddr::new(phys_available_end as u64)),
         );
     }
 }
