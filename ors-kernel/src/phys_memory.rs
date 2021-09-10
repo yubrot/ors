@@ -2,6 +2,7 @@
 // and does not manage the usage of linear (virtual) addresses.
 
 use core::mem;
+use log::trace;
 
 mod x64 {
     pub use x86_64::structures::paging::{FrameAllocator, FrameDeallocator, PhysFrame, Size4KiB};
@@ -9,15 +10,15 @@ mod x64 {
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]
-pub struct FrameId(usize);
+pub struct Frame(usize);
 
-impl FrameId {
-    fn from_phys_addr(addr: x64::PhysAddr) -> Self {
-        Self(addr.as_u64() as usize / BYTES_PER_FRAME)
+impl Frame {
+    pub unsafe fn from_phys_addr(addr: x64::PhysAddr) -> Self {
+        Self(addr.as_u64() as usize / Frame::SIZE)
     }
 
     pub fn phys_addr(self) -> x64::PhysAddr {
-        x64::PhysAddr::new((self.0 * BYTES_PER_FRAME) as u64)
+        x64::PhysAddr::new((self.0 * Frame::SIZE) as u64)
     }
 
     pub fn phys_frame(self) -> x64::PhysFrame {
@@ -30,11 +31,12 @@ impl FrameId {
 
     const MIN: Self = Self(1); // TODO: Why 1 instead of 0?
     const MAX: Self = Self(FRAME_COUNT);
+
+    pub const SIZE: usize = 4096; // 4KiB (= 2 ** 12)
 }
 
 const MAX_PHYSICAL_MEMORY_BYTES: usize = 128 * 1024 * 1024 * 1024; // 128GiB
-const BYTES_PER_FRAME: usize = 4096; // 4KiB (= 2 ** 12)
-const FRAME_COUNT: usize = MAX_PHYSICAL_MEMORY_BYTES / BYTES_PER_FRAME;
+const FRAME_COUNT: usize = MAX_PHYSICAL_MEMORY_BYTES / Frame::SIZE;
 
 type MapLine = usize;
 const BITS_PER_MAP_LINE: usize = 8 * mem::size_of::<MapLine>();
@@ -42,8 +44,8 @@ const MAP_LINE_COUNT: usize = FRAME_COUNT / BITS_PER_MAP_LINE;
 
 pub struct BitmapMemoryManager {
     alloc_map: [MapLine; MAP_LINE_COUNT],
-    begin: FrameId,
-    end: FrameId,
+    begin: Frame,
+    end: Frame,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
@@ -55,25 +57,25 @@ impl BitmapMemoryManager {
     pub const fn new() -> Self {
         Self {
             alloc_map: [0; MAP_LINE_COUNT],
-            begin: FrameId::MIN,
-            end: FrameId::MAX,
+            begin: Frame::MIN,
+            end: Frame::MAX,
         }
     }
 
-    pub fn set_memory_range(&mut self, begin: FrameId, end: FrameId) {
+    fn set_memory_range(&mut self, begin: Frame, end: Frame) {
         self.begin = begin;
         self.end = end;
     }
 
-    pub fn get_bit(&self, id: FrameId) -> bool {
-        let line_index = id.0 / BITS_PER_MAP_LINE;
-        let bit_index = id.0 % BITS_PER_MAP_LINE;
+    fn get_bit(&self, frame: Frame) -> bool {
+        let line_index = frame.0 / BITS_PER_MAP_LINE;
+        let bit_index = frame.0 % BITS_PER_MAP_LINE;
         (self.alloc_map[line_index] & (1 << bit_index)) != 0
     }
 
-    pub fn set_bit(&mut self, id: FrameId, allocated: bool) {
-        let line_index = id.0 / BITS_PER_MAP_LINE;
-        let bit_index = id.0 % BITS_PER_MAP_LINE;
+    fn set_bit(&mut self, frame: Frame, allocated: bool) {
+        let line_index = frame.0 / BITS_PER_MAP_LINE;
+        let bit_index = frame.0 % BITS_PER_MAP_LINE;
 
         if allocated {
             self.alloc_map[line_index] |= 1 << bit_index;
@@ -82,37 +84,39 @@ impl BitmapMemoryManager {
         }
     }
 
-    pub fn mark_allocated_in_bytes(&mut self, start: FrameId, bytes: usize) {
-        self.mark_allocated(start, bytes / BYTES_PER_FRAME)
+    fn mark_allocated_in_bytes(&mut self, start: Frame, bytes: usize) {
+        self.mark_allocated(start, bytes / Frame::SIZE)
     }
 
-    pub fn allocate(&mut self, num_frames: usize) -> Result<FrameId, AllocateError> {
+    pub fn allocate(&mut self, num_frames: usize) -> Result<Frame, AllocateError> {
         // Doing the first fit allocation
-        let mut id = self.begin;
+        let mut frame = self.begin;
         'search: loop {
             for i in 0..num_frames {
-                if id.offset(i) >= self.end {
+                if frame.offset(i) >= self.end {
                     Err(AllocateError::NotEnoughMemory)?
                 }
-                if self.get_bit(id.offset(i)) {
-                    id = id.offset(i + 1);
+                if self.get_bit(frame.offset(i)) {
+                    frame = frame.offset(i + 1);
                     continue 'search;
                 }
             }
-            self.mark_allocated(id, num_frames);
-            return Ok(id);
+            self.mark_allocated(frame, num_frames);
+            return Ok(frame);
         }
     }
 
-    pub fn mark_allocated(&mut self, id: FrameId, num_frames: usize) {
+    fn mark_allocated(&mut self, frame: Frame, num_frames: usize) {
         for i in 0..num_frames {
-            self.set_bit(id.offset(i), true);
+            trace!("phys_memory: allocate {:?}", frame.offset(i).phys_addr());
+            self.set_bit(frame.offset(i), true);
         }
     }
 
-    pub fn free(&mut self, id: FrameId, num_frames: usize) {
+    pub fn free(&mut self, frame: Frame, num_frames: usize) {
         for i in 0..num_frames {
-            self.set_bit(id.offset(i), false);
+            trace!("phys_memory: deallocate {:?}", frame.offset(i).phys_addr());
+            self.set_bit(frame.offset(i), false);
         }
     }
 
@@ -123,23 +127,22 @@ impl BitmapMemoryManager {
             let phys_end = d.phys_end as usize;
             if phys_available_end < d.phys_start as usize {
                 self.mark_allocated_in_bytes(
-                    FrameId::from_phys_addr(x64::PhysAddr::new(phys_available_end as u64)),
+                    unsafe { Frame::from_phys_addr(x64::PhysAddr::new(phys_available_end as u64)) },
                     phys_start - phys_available_end,
                 );
             }
             phys_available_end = phys_end;
         }
-        self.set_memory_range(
-            FrameId::MIN,
-            FrameId::from_phys_addr(x64::PhysAddr::new(phys_available_end as u64)),
-        );
+        self.set_memory_range(Frame::MIN, unsafe {
+            Frame::from_phys_addr(x64::PhysAddr::new(phys_available_end as u64))
+        });
     }
 }
 
 unsafe impl x64::FrameAllocator<x64::Size4KiB> for BitmapMemoryManager {
     fn allocate_frame(&mut self) -> Option<x64::PhysFrame<x64::Size4KiB>> {
         match self.allocate(1) {
-            Ok(id) => Some(id.phys_frame()),
+            Ok(frame) => Some(frame.phys_frame()),
             Err(_) => None,
         }
     }
@@ -147,6 +150,28 @@ unsafe impl x64::FrameAllocator<x64::Size4KiB> for BitmapMemoryManager {
 
 impl x64::FrameDeallocator<x64::Size4KiB> for BitmapMemoryManager {
     unsafe fn deallocate_frame(&mut self, frame: x64::PhysFrame<x64::Size4KiB>) {
-        self.free(FrameId::from_phys_addr(frame.start_address()), 1)
+        self.free(Frame::from_phys_addr(frame.start_address()), 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::global::phys_memory_manager;
+    use log::trace;
+
+    #[test_case]
+    fn test_memory_manager() {
+        trace!("TESTING phys_memory::test_memory_manager");
+
+        let a = phys_memory_manager().allocate(1).unwrap();
+        let b = phys_memory_manager().allocate(1).unwrap();
+        assert_ne!(a, b);
+
+        let c = phys_memory_manager().allocate(3).unwrap();
+        assert_ne!(b, c);
+
+        phys_memory_manager().free(a, 1);
+        phys_memory_manager().free(b, 1);
+        phys_memory_manager().free(c, 3);
     }
 }

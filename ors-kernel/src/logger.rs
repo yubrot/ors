@@ -1,9 +1,13 @@
 use super::global;
+#[cfg(not(test))]
 use super::graphics::{Color, ConsoleWriteOptions};
 use core::fmt::Write;
 
 pub fn initialize() {
     log::set_logger(&KernelLogger).unwrap();
+    #[cfg(test)]
+    log::set_max_level(log::LevelFilter::Trace);
+    #[cfg(not(test))]
     log::set_max_level(log::LevelFilter::Info);
 }
 
@@ -15,6 +19,7 @@ impl log::Log for KernelLogger {
     }
 
     fn log(&self, record: &log::Record) {
+        #[cfg(not(test))]
         writeln!(
             global::default_console().writer(
                 &mut **global::frame_buffer(),

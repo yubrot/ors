@@ -56,3 +56,23 @@ pub unsafe fn mapper() -> impl x64::Mapper<x64::Size4KiB> + x64::Translate {
     // TODO: Replace it with manually implemented one
     x64::OffsetPageTable::new(&mut PML4_TABLE, x64::VirtAddr::zero())
 }
+
+pub fn as_virt_addr(addr: x64::PhysAddr) -> Option<x64::VirtAddr> {
+    if addr.as_u64() < x64::Size1GiB::SIZE * 64 {
+        // Physical memory areas of up to 64 GiB are identity-mapped.
+        Some(x64::VirtAddr::new(addr.as_u64()))
+    } else {
+        None
+    }
+}
+
+pub fn as_phys_addr(addr: x64::VirtAddr) -> Option<x64::PhysAddr> {
+    if addr.as_u64() < x64::Size1GiB::SIZE * 64 {
+        // Virtual memory areas of up to 64 GiB are identity-mapped.
+        Some(x64::PhysAddr::new(addr.as_u64()))
+    } else {
+        // TODO: How this should be handled?
+        // unsafe { mapper().translate_addr(addr) }
+        None
+    }
+}
