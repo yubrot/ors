@@ -4,7 +4,7 @@
 use core::mem;
 
 mod x64 {
-    pub use x86_64::structures::paging::PhysFrame;
+    pub use x86_64::structures::paging::{FrameAllocator, FrameDeallocator, PhysFrame, Size4KiB};
     pub use x86_64::PhysAddr;
 }
 
@@ -133,5 +133,20 @@ impl BitmapMemoryManager {
             FrameId::MIN,
             FrameId::from_phys_addr(x64::PhysAddr::new(phys_available_end as u64)),
         );
+    }
+}
+
+unsafe impl x64::FrameAllocator<x64::Size4KiB> for BitmapMemoryManager {
+    fn allocate_frame(&mut self) -> Option<x64::PhysFrame<x64::Size4KiB>> {
+        match self.allocate(1) {
+            Ok(id) => Some(id.phys_frame()),
+            Err(_) => None,
+        }
+    }
+}
+
+impl x64::FrameDeallocator<x64::Size4KiB> for BitmapMemoryManager {
+    unsafe fn deallocate_frame(&mut self, frame: x64::PhysFrame<x64::Size4KiB>) {
+        self.free(FrameId::from_phys_addr(frame.start_address()), 1)
     }
 }

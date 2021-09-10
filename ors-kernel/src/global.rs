@@ -1,5 +1,5 @@
 use super::graphics;
-use super::pci::Device;
+use super::pci;
 use super::phys_memory;
 use heapless::Vec;
 use spin::{Mutex, MutexGuard, Once};
@@ -7,7 +7,7 @@ use uart_16550::SerialPort;
 
 pub type PhysMemoryManager = phys_memory::BitmapMemoryManager;
 pub type FrameBuffer = &'static mut (dyn graphics::FrameBuffer + Send + Sync);
-pub type PciDevices = Vec<Device, 32>;
+pub type PciDevices = Vec<pci::Device, 32>;
 pub type Console = graphics::Console<80, 25>;
 
 static PHYS_MEMORY_MANAGER: Mutex<PhysMemoryManager> = Mutex::new(PhysMemoryManager::new());

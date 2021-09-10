@@ -9,7 +9,7 @@ pub mod global;
 pub mod graphics;
 pub mod interrupts;
 pub mod logger;
-pub mod page_table;
+pub mod paging;
 pub mod pci;
 pub mod phys_memory;
 pub mod qemu;
@@ -23,7 +23,7 @@ use x86_64::instructions as x64;
 #[no_mangle]
 pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap) {
     unsafe { segmentation::initialize() };
-    unsafe { page_table::initialize() };
+    unsafe { paging::initialize() };
     unsafe { interrupts::initialize() };
     global::phys_memory_manager().initialize(mm);
     global::initialize_frame_buffer(unsafe {
