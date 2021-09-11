@@ -1,4 +1,4 @@
-use super::global::phys_memory_manager;
+use super::global::frame_manager;
 use super::paging::{as_phys_addr, as_virt_addr};
 use super::phys_memory::Frame;
 use alloc::alloc::{GlobalAlloc, Layout};
@@ -61,7 +61,7 @@ unsafe impl GlobalAlloc for KernelAllocator {
                 );
                 ptr
             }
-            AllocationMode::Frame(num) => match phys_memory_manager().allocate(num) {
+            AllocationMode::Frame(num) => match frame_manager().allocate(num) {
                 Ok(frame) => {
                     let addr = as_virt_addr(frame.phys_addr()).unwrap();
                     trace!("allocator: allocate frame (num = {}) -> {:?}", num, addr);
@@ -89,7 +89,7 @@ unsafe impl GlobalAlloc for KernelAllocator {
                 let addr = x64::VirtAddr::from_ptr(ptr as *const u8);
                 trace!("allocator: deallocate frame (num = {}) -> {:?}", num, addr);
                 let frame = Frame::from_phys_addr(as_phys_addr(addr).unwrap());
-                phys_memory_manager().free(frame, num);
+                frame_manager().free(frame, num);
             }
         }
     }
@@ -99,7 +99,7 @@ fn allocate_frame_for_block(index: usize) -> *mut u8 {
     let block_size = BLOCK_SIZES[index];
     let num_blocks_per_frame = Frame::SIZE / block_size;
     // NOTE: Frames for AllocationMode::Block are never deallocated
-    let ptr: *mut u8 = match phys_memory_manager().allocate(1) {
+    let ptr: *mut u8 = match frame_manager().allocate(1) {
         Ok(frame) => as_virt_addr(frame.phys_addr()).unwrap().as_mut_ptr(),
         Err(_) => return ptr::null_mut(),
     };

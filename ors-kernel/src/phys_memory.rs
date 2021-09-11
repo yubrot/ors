@@ -42,7 +42,7 @@ type MapLine = usize;
 const BITS_PER_MAP_LINE: usize = 8 * mem::size_of::<MapLine>();
 const MAP_LINE_COUNT: usize = FRAME_COUNT / BITS_PER_MAP_LINE;
 
-pub struct BitmapMemoryManager {
+pub struct BitmapFrameManager {
     alloc_map: [MapLine; MAP_LINE_COUNT],
     begin: Frame,
     end: Frame,
@@ -50,10 +50,10 @@ pub struct BitmapMemoryManager {
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub enum AllocateError {
-    NotEnoughMemory,
+    NotEnoughFrame,
 }
 
-impl BitmapMemoryManager {
+impl BitmapFrameManager {
     pub const fn new() -> Self {
         Self {
             alloc_map: [0; MAP_LINE_COUNT],
@@ -94,7 +94,7 @@ impl BitmapMemoryManager {
         'search: loop {
             for i in 0..num_frames {
                 if frame.offset(i) >= self.end {
-                    Err(AllocateError::NotEnoughMemory)?
+                    Err(AllocateError::NotEnoughFrame)?
                 }
                 if self.get_bit(frame.offset(i)) {
                     frame = frame.offset(i + 1);
@@ -139,7 +139,7 @@ impl BitmapMemoryManager {
     }
 }
 
-unsafe impl x64::FrameAllocator<x64::Size4KiB> for BitmapMemoryManager {
+unsafe impl x64::FrameAllocator<x64::Size4KiB> for BitmapFrameManager {
     fn allocate_frame(&mut self) -> Option<x64::PhysFrame<x64::Size4KiB>> {
         match self.allocate(1) {
             Ok(frame) => Some(frame.phys_frame()),
@@ -148,7 +148,7 @@ unsafe impl x64::FrameAllocator<x64::Size4KiB> for BitmapMemoryManager {
     }
 }
 
-impl x64::FrameDeallocator<x64::Size4KiB> for BitmapMemoryManager {
+impl x64::FrameDeallocator<x64::Size4KiB> for BitmapFrameManager {
     unsafe fn deallocate_frame(&mut self, frame: x64::PhysFrame<x64::Size4KiB>) {
         self.free(Frame::from_phys_addr(frame.start_address()), 1)
     }
@@ -156,22 +156,22 @@ impl x64::FrameDeallocator<x64::Size4KiB> for BitmapMemoryManager {
 
 #[cfg(test)]
 mod tests {
-    use crate::global::phys_memory_manager;
+    use crate::global::frame_manager;
     use log::trace;
 
     #[test_case]
-    fn test_memory_manager() {
-        trace!("TESTING phys_memory::test_memory_manager");
+    fn test_frame_manager() {
+        trace!("TESTING phys_memory::test_frame_manager");
 
-        let a = phys_memory_manager().allocate(1).unwrap();
-        let b = phys_memory_manager().allocate(1).unwrap();
+        let a = frame_manager().allocate(1).unwrap();
+        let b = frame_manager().allocate(1).unwrap();
         assert_ne!(a, b);
 
-        let c = phys_memory_manager().allocate(3).unwrap();
+        let c = frame_manager().allocate(3).unwrap();
         assert_ne!(b, c);
 
-        phys_memory_manager().free(a, 1);
-        phys_memory_manager().free(b, 1);
-        phys_memory_manager().free(c, 3);
+        frame_manager().free(a, 1);
+        frame_manager().free(b, 1);
+        frame_manager().free(c, 3);
     }
 }

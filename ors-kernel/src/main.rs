@@ -30,7 +30,7 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap) {
     unsafe { segmentation::initialize() };
     unsafe { paging::initialize() };
     unsafe { interrupts::initialize() };
-    global::phys_memory_manager().initialize(mm);
+    global::frame_manager().initialize(mm);
     global::initialize_frame_buffer(unsafe {
         static mut PAYLOAD: graphics::FrameBufferPayload = graphics::FrameBufferPayload::new();
         graphics::prepare_frame_buffer(*fb, &mut PAYLOAD)

@@ -5,19 +5,20 @@ use heapless::Vec;
 use spin::{Mutex, MutexGuard, Once};
 use uart_16550::SerialPort;
 
-pub type PhysMemoryManager = phys_memory::BitmapMemoryManager;
+// NOTE: These `Frame`s are completely unrelated
+pub type FrameManager = phys_memory::BitmapFrameManager;
 pub type FrameBuffer = &'static mut (dyn graphics::FrameBuffer + Send + Sync);
 pub type PciDevices = Vec<pci::Device, 32>;
 pub type Console = graphics::Console<80, 25>;
 
-static PHYS_MEMORY_MANAGER: Mutex<PhysMemoryManager> = Mutex::new(PhysMemoryManager::new());
+static FRAME_MANAGER: Mutex<FrameManager> = Mutex::new(FrameManager::new());
 static FRAME_BUFFER: Once<Mutex<FrameBuffer>> = Once::new();
 static PCI_DEVICES: Once<PciDevices> = Once::new();
 static DEFAULT_CONSOLE: Mutex<Console> = Mutex::new(Console::new());
 static DEFAULT_SERIAL_PORT: Mutex<SerialPort> = Mutex::new(unsafe { SerialPort::new(0x3f8) });
 
-pub fn phys_memory_manager() -> MutexGuard<'static, PhysMemoryManager> {
-    PHYS_MEMORY_MANAGER.lock()
+pub fn frame_manager() -> MutexGuard<'static, FrameManager> {
+    FRAME_MANAGER.lock()
 }
 
 pub fn frame_buffer() -> MutexGuard<'static, FrameBuffer> {
