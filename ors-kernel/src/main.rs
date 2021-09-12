@@ -9,7 +9,6 @@
 
 extern crate alloc;
 
-pub mod acpi;
 pub mod allocator;
 pub mod global;
 pub mod graphics;
@@ -20,24 +19,24 @@ pub mod pci;
 pub mod phys_memory;
 pub mod qemu;
 pub mod segmentation;
+pub mod x64;
 
 use log::{error, info};
 use ors_common::frame_buffer::FrameBuffer as RawFrameBuffer;
 use ors_common::memory_map::MemoryMap;
-use x86_64::instructions as x64;
 
 #[no_mangle]
 pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u64) {
+    logger::initialize();
     unsafe { segmentation::initialize() };
     unsafe { paging::initialize() };
-    unsafe { interrupts::initialize() };
+    unsafe { interrupts::initialize(rsdp as usize) };
     global::frame_manager().initialize(mm);
     global::initialize_frame_buffer(unsafe {
         static mut PAYLOAD: graphics::FrameBufferPayload = graphics::FrameBufferPayload::new();
         graphics::prepare_frame_buffer(*fb, &mut PAYLOAD)
     });
     global::initialize_devices(pci::Device::scan::<32>().unwrap());
-    logger::initialize();
 
     global::frame_buffer().clear(graphics::Color::BLACK);
 
@@ -45,15 +44,6 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     test_main();
 
     info!("Hello, World!");
-    let info = unsafe { acpi::platform_info(rsdp as usize) };
-    info!("power_profile = {:?}", info.power_profile);
-    info!("interrupt_model = {:#?}", info.interrupt_model);
-    if let Some(info) = info.processor_info {
-        info!("main_processor = {:#?}", info.boot_processor);
-        for (i, p) in info.application_processors.iter().enumerate() {
-            info!("app_processor[{}] = {:#?}", i, p);
-        }
-    }
 
     loop {
         x64::hlt()

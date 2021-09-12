@@ -20,16 +20,18 @@ impl log::Log for KernelLogger {
 
     fn log(&self, record: &log::Record) {
         #[cfg(not(test))]
-        writeln!(
-            global::default_console().writer(
-                &mut **global::frame_buffer(),
-                ConsoleWriteOptions::new(0, 0, Color::WHITE, Color::BLACK),
-            ),
-            "{}: {}",
-            record.level(),
-            record.args()
-        )
-        .unwrap();
+        if let Some(mut fb) = global::frame_buffer_if_available() {
+            writeln!(
+                global::default_console().writer(
+                    &mut **fb,
+                    ConsoleWriteOptions::new(0, 0, Color::WHITE, Color::BLACK),
+                ),
+                "{}: {}",
+                record.level(),
+                record.args()
+            )
+            .unwrap();
+        }
         writeln!(global::default_serial_port(), "{}", record.args()).unwrap();
     }
 

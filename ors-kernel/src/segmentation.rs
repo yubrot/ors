@@ -1,13 +1,4 @@
-use x64::Segment;
-
-mod x64 {
-    pub use x86_64::addr::VirtAddr;
-    pub use x86_64::instructions::segmentation::{Segment, CS, SS};
-    pub use x86_64::instructions::tables::load_tss;
-    pub use x86_64::structures::gdt::{Descriptor, GlobalDescriptorTable, SegmentSelector};
-    pub use x86_64::structures::tss::TaskStateSegment;
-    pub use x86_64::structures::DescriptorTablePointer;
-}
+use super::x64::{self, Segment};
 
 static mut GDT: x64::GlobalDescriptorTable = x64::GlobalDescriptorTable::new();
 static mut TSS: x64::TaskStateSegment = x64::TaskStateSegment::new();

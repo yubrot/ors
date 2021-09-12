@@ -1,13 +1,9 @@
 #![allow(dead_code)]
 
+use super::x64;
 use bit_field::BitField;
 use derive_new::new;
 use heapless::Vec;
-
-mod x64 {
-    pub use x86_64::instructions::hlt;
-    pub use x86_64::instructions::port::{Port, PortWriteOnly};
-}
 
 // https://wiki.osdev.org/PCI
 

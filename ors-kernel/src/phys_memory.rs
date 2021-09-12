@@ -1,13 +1,9 @@
 // A frame represents a memory section on a physical address,
 // and does not manage the usage of linear (virtual) addresses.
 
+use super::x64;
 use core::mem;
 use log::trace;
-
-mod x64 {
-    pub use x86_64::structures::paging::{FrameAllocator, FrameDeallocator, PhysFrame, Size4KiB};
-    pub use x86_64::PhysAddr;
-}
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]
 pub struct Frame(usize);
@@ -85,7 +81,7 @@ impl BitmapFrameManager {
     }
 
     fn mark_allocated_in_bytes(&mut self, start: Frame, bytes: usize) {
-        self.mark_allocated(start, bytes / Frame::SIZE)
+        self.mark_allocated(start, bytes / Frame::SIZE, true)
     }
 
     pub fn allocate(&mut self, num_frames: usize) -> Result<Frame, AllocateError> {
@@ -101,14 +97,16 @@ impl BitmapFrameManager {
                     continue 'search;
                 }
             }
-            self.mark_allocated(frame, num_frames);
+            self.mark_allocated(frame, num_frames, false);
             return Ok(frame);
         }
     }
 
-    fn mark_allocated(&mut self, frame: Frame, num_frames: usize) {
+    fn mark_allocated(&mut self, frame: Frame, num_frames: usize, init: bool) {
         for i in 0..num_frames {
-            trace!("phys_memory: allocate {:?}", frame.offset(i).phys_addr());
+            if !init {
+                trace!("phys_memory: allocate {:?}", frame.offset(i).phys_addr());
+            }
             self.set_bit(frame.offset(i), true);
         }
     }

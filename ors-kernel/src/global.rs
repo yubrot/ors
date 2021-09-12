@@ -25,6 +25,10 @@ pub fn frame_buffer() -> MutexGuard<'static, FrameBuffer> {
     FRAME_BUFFER.wait().lock()
 }
 
+pub fn frame_buffer_if_available() -> Option<MutexGuard<'static, FrameBuffer>> {
+    FRAME_BUFFER.get().map(|m| m.lock())
+}
+
 pub fn initialize_frame_buffer(fb: FrameBuffer) {
     FRAME_BUFFER.call_once(move || Mutex::new(fb));
 }

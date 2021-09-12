@@ -1,14 +1,11 @@
 use super::global::frame_manager;
 use super::paging::{as_phys_addr, as_virt_addr};
 use super::phys_memory::Frame;
+use crate::x64;
 use alloc::alloc::{GlobalAlloc, Layout};
 use core::ptr;
 use log::trace;
 use spin::Mutex;
-
-mod x64 {
-    pub use x86_64::VirtAddr;
-}
 
 #[derive(Debug)]
 enum AllocationMode {

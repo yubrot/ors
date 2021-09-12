@@ -1,19 +1,12 @@
-use x64::PageSize;
+use super::x64::{self, PageSize};
+use acpi::{AcpiHandler, PhysicalMapping};
+use core::ptr::NonNull;
 
-mod x64 {
-    pub use x86_64::registers::control::{Cr3, Cr3Flags};
-    pub use x86_64::structures::paging::page_table::PageTableFlags;
-    pub use x86_64::structures::paging::{
-        Mapper, OffsetPageTable, PageSize, PageTable, PhysFrame, Size1GiB, Size2MiB, Size4KiB,
-        Translate,
-    };
-    pub use x86_64::{PhysAddr, VirtAddr};
-    pub const EMPTY_PAGE_TABLE: PageTable = PageTable::new();
-}
+const EMPTY_PAGE_TABLE: x64::PageTable = x64::PageTable::new();
 
 static mut PML4_TABLE: x64::PageTable = x64::PageTable::new();
 static mut PDP_TABLE: x64::PageTable = x64::PageTable::new();
-static mut PAGE_DIRECTORY: [x64::PageTable; 64] = [x64::EMPTY_PAGE_TABLE; 64]; // supports up to 64GiB
+static mut PAGE_DIRECTORY: [x64::PageTable; 64] = [EMPTY_PAGE_TABLE; 64]; // supports up to 64GiB
 
 pub unsafe fn initialize() {
     initialize_identity_mapping();
@@ -75,4 +68,18 @@ pub fn as_phys_addr(addr: x64::VirtAddr) -> Option<x64::PhysAddr> {
         // unsafe { mapper().translate_addr(addr) }
         None
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct KernelAcpiHandler;
+
+impl AcpiHandler for KernelAcpiHandler {
+    unsafe fn map_physical_region<T>(&self, addr: usize, size: usize) -> PhysicalMapping<Self, T> {
+        let ptr = as_virt_addr(x64::PhysAddr::new(addr as u64))
+            .unwrap()
+            .as_mut_ptr();
+        PhysicalMapping::new(addr, NonNull::new(ptr).unwrap(), size, size, self.clone())
+    }
+
+    fn unmap_physical_region<T>(_region: &PhysicalMapping<Self, T>) {}
 }
