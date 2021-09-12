@@ -17,6 +17,7 @@ use ors_common::{frame_buffer, memory_map};
 use uefi::prelude::*;
 use uefi::proto::console::gop::{GraphicsOutput, PixelFormat};
 use uefi::table::boot::{AllocateType, MemoryDescriptor, MemoryType};
+use uefi::table::cfg::ACPI_GUID;
 use uefi::table::Runtime;
 use x86_64::instructions as x64;
 
@@ -35,20 +36,31 @@ fn efi_main(image: Handle, mut st: SystemTable<Boot>) -> Status {
     let entry_point_addr = load_kernel("ors-kernel.elf", image, &st);
 
     info!("entry_point_addr = 0x{:x}", entry_point_addr);
-    let entry_point: extern "sysv64" fn(&frame_buffer::FrameBuffer, &memory_map::MemoryMap) =
+    let entry_point: extern "sysv64" fn(&frame_buffer::FrameBuffer, &memory_map::MemoryMap, u64) =
         unsafe { mem::transmute(entry_point_addr) };
 
-    info!("get_frame_buffer_config");
+    info!("get_frame_buffer");
     let frame_buffer = get_frame_buffer(st.boot_services());
+
+    info!("get_rsdp");
+    let rsdp = get_rsdp(&st);
 
     info!("exit_boot_services");
     let (_st, memory_map) = exit_boot_services(image, st);
 
-    entry_point(&frame_buffer, &memory_map);
+    entry_point(&frame_buffer, &memory_map, rsdp);
 
     loop {
         x64::hlt()
     }
+}
+
+fn get_rsdp(st: &SystemTable<Boot>) -> u64 {
+    st.config_table()
+        .iter()
+        .find(|config| config.guid == ACPI_GUID)
+        .map(|config| config.address as u64)
+        .expect("Could not find RSDP")
 }
 
 fn dump_memory_map(path: &str, image: Handle, st: &SystemTable<Boot>) {

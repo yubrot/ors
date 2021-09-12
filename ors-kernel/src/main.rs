@@ -9,6 +9,7 @@
 
 extern crate alloc;
 
+pub mod acpi;
 pub mod allocator;
 pub mod global;
 pub mod graphics;
@@ -26,7 +27,7 @@ use ors_common::memory_map::MemoryMap;
 use x86_64::instructions as x64;
 
 #[no_mangle]
-pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap) {
+pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u64) {
     unsafe { segmentation::initialize() };
     unsafe { paging::initialize() };
     unsafe { interrupts::initialize() };
@@ -44,6 +45,15 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap) {
     test_main();
 
     info!("Hello, World!");
+    let info = unsafe { acpi::platform_info(rsdp as usize) };
+    info!("power_profile = {:?}", info.power_profile);
+    info!("interrupt_model = {:#?}", info.interrupt_model);
+    if let Some(info) = info.processor_info {
+        info!("main_processor = {:#?}", info.boot_processor);
+        for (i, p) in info.application_processors.iter().enumerate() {
+            info!("app_processor[{}] = {:#?}", i, p);
+        }
+    }
 
     loop {
         x64::hlt()

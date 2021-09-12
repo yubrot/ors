@@ -4,6 +4,7 @@ name = "ors-kernel"
 version = "0.1.0"
 
 [dependencies]
+acpi = "4"
 bit_field = "0.10"
 derive-new = {version = "0.5", default-features = false}
 heapless = "0.7"

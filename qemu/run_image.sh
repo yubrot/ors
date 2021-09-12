@@ -15,6 +15,7 @@ fi
 
 set +e
 qemu-system-x86_64 \
+  -smp 4 \
   -m 1G \
   -drive if=pflash,format=raw,readonly=on,file=$DEVENV_DIR/OVMF_CODE.fd \
   -drive if=pflash,format=raw,file=$DEVENV_DIR/OVMF_VARS.fd \
