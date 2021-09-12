@@ -31,6 +31,7 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     unsafe { segmentation::initialize() };
     unsafe { paging::initialize() };
     unsafe { interrupts::initialize(rsdp as usize) };
+    global::default_serial_port().init();
     global::frame_manager().initialize(mm);
     global::initialize_frame_buffer(unsafe {
         static mut PAYLOAD: graphics::FrameBufferPayload = graphics::FrameBufferPayload::new();
@@ -39,6 +40,8 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     global::initialize_devices(pci::Device::scan::<32>().unwrap());
 
     global::frame_buffer().clear(graphics::Color::BLACK);
+
+    interrupts::enable();
 
     #[cfg(test)]
     test_main();
