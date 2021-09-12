@@ -35,7 +35,11 @@ ors is based on [MikanOS (ゼロからの OS 自作入門)](https://www.amazon.c
 ## Roadmap
 
 - [ ] Complete [ゼロからの OS 自作入門](https://www.amazon.co.jp/gp/product/B08Z3MNR9J)
-- [ ] Complete [Writing an OS in Rust](https://os.phil-opp.com/)
+- [ ] Complete [Writing an OS in Rust](https://os.phil-opp.com/) (second edition)
+  - [x] Bare bones
+  - [x] Interrupts
+  - [x] Memory Management
+  - [ ] Multitasking
 - [ ] Try to implement TCP protocol stack
 - [ ] Compare with [xv6](https://github.com/mit-pdos/xv6-public)
 - [ ] Compare with POSIX

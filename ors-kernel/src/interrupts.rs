@@ -4,7 +4,8 @@ use super::segmentation::DOUBLE_FAULT_IST_INDEX;
 use super::x64;
 use acpi::AcpiTables;
 use log::{error, info, trace};
-use spin::Once;
+use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
+use spin::{Lazy, Mutex, Once};
 
 static mut IDT: x64::InterruptDescriptorTable = x64::InterruptDescriptorTable::new();
 static LAPIC: Once<x64::LApic> = Once::new();
@@ -20,7 +21,11 @@ pub unsafe fn initialize(rsdp: usize) {
 }
 
 pub fn enable() {
-    x64::sti();
+    x64::interrupts::enable();
+}
+
+pub fn without_interrupts<T>(f: impl FnOnce() -> T) -> T {
+    x64::interrupts::without_interrupts(f)
 }
 
 unsafe fn initialize_idt() {
@@ -121,18 +126,22 @@ unsafe fn initialize_apic(rsdp: usize) {
 }
 
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: x64::InterruptStackFrame) {
-    info!("EXCEPTION: BREAKPOINT");
-    info!("{:#?}", stack_frame);
+    without_interrupts(|| {
+        info!("EXCEPTION: BREAKPOINT");
+        info!("{:#?}", stack_frame);
+    });
 }
 
 extern "x86-interrupt" fn page_fault_handler(
     stack_frame: x64::InterruptStackFrame,
     error_code: x64::PageFaultErrorCode,
 ) {
-    info!("EXCEPTION: PAGE FAULT");
-    info!("Address: {:?}", x64::Cr2::read());
-    info!("Error Code: {:?}", error_code);
-    info!("{:#?}", stack_frame);
+    without_interrupts(|| {
+        info!("EXCEPTION: PAGE FAULT");
+        info!("Address: {:?}", x64::Cr2::read());
+        info!("Error Code: {:?}", error_code);
+        info!("{:#?}", stack_frame);
+    });
 
     loop {
         x64::hlt()
@@ -143,22 +152,45 @@ extern "x86-interrupt" fn double_fault_handler(
     stack_frame: x64::InterruptStackFrame,
     _error_code: u64,
 ) -> ! {
-    error!("EXCEPTION: DOUBLE FAULT");
-    error!("{:#?}", stack_frame);
+    without_interrupts(|| {
+        error!("EXCEPTION: DOUBLE FAULT");
+        error!("{:#?}", stack_frame);
+    });
 
     loop {
         x64::hlt()
     }
 }
 
+static KEYBOARD: Lazy<Mutex<Keyboard<layouts::Jis109Key, ScancodeSet1>>> = Lazy::new(|| {
+    Mutex::new(Keyboard::new(
+        layouts::Jis109Key,
+        ScancodeSet1,
+        HandleControl::Ignore,
+    ))
+});
+
 extern "x86-interrupt" fn kbd_handler(_stack_frame: x64::InterruptStackFrame) {
-    info!("KBD INTERRUPT");
+    without_interrupts(|| {
+        let mut keyboard = KEYBOARD.lock();
+        if let Ok(Some(e)) = keyboard.add_byte(unsafe { x64::Port::new(0x60).read() }) {
+            if let Some(key) = keyboard.process_keyevent(e) {
+                match key {
+                    DecodedKey::RawKey(key) => info!("KBD: {:?}", key),
+                    DecodedKey::Unicode(ch) => info!("KBD: {}", ch),
+                }
+            }
+        }
+    });
+
     unsafe { LAPIC.wait().set_eoi(0) };
 }
 
 extern "x86-interrupt" fn com1_handler(_stack_frame: x64::InterruptStackFrame) {
-    let input = default_serial_port().receive();
-    info!("COM1 INTERRUPT: {}", input);
+    without_interrupts(|| {
+        let input = default_serial_port().receive();
+        info!("COM1: {}", char::from(input));
+    });
     unsafe { LAPIC.wait().set_eoi(0) };
 }
 

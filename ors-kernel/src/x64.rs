@@ -1,7 +1,7 @@
 //! Re-exporting x86_64 crate items and some additional definitions
 
 pub use x86_64::instructions::hlt;
-pub use x86_64::instructions::interrupts::enable as sti;
+pub use x86_64::instructions::interrupts;
 pub use x86_64::instructions::port::{Port, PortWriteOnly};
 pub use x86_64::instructions::segmentation::{Segment, CS, SS};
 pub use x86_64::instructions::tables::load_tss;
