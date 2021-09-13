@@ -1,6 +1,5 @@
-use super::global::frame_manager;
-use super::paging::{as_phys_addr, as_virt_addr};
-use super::phys_memory::Frame;
+use crate::paging::{as_phys_addr, as_virt_addr};
+use crate::phys_memory::{frame_manager, Frame};
 use crate::x64;
 use alloc::alloc::{GlobalAlloc, Layout};
 use core::ptr;

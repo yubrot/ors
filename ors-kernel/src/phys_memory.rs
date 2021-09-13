@@ -1,9 +1,16 @@
 // A frame represents a memory section on a physical address,
 // and does not manage the usage of linear (virtual) addresses.
 
-use super::x64;
+use crate::x64;
 use core::mem;
 use log::trace;
+use spin::{Mutex, MutexGuard};
+
+static FRAME_MANAGER: Mutex<BitmapFrameManager> = Mutex::new(BitmapFrameManager::new());
+
+pub fn frame_manager() -> MutexGuard<'static, BitmapFrameManager> {
+    FRAME_MANAGER.lock()
+}
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]
 pub struct Frame(usize);
@@ -154,7 +161,7 @@ impl x64::FrameDeallocator<x64::Size4KiB> for BitmapFrameManager {
 
 #[cfg(test)]
 mod tests {
-    use crate::global::frame_manager;
+    use super::frame_manager;
     use log::trace;
 
     #[test_case]

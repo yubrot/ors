@@ -1,7 +1,7 @@
-use super::global::default_serial_port;
-use super::paging::KernelAcpiHandler;
-use super::segmentation::DOUBLE_FAULT_IST_INDEX;
-use super::x64;
+use crate::paging::KernelAcpiHandler;
+use crate::segmentation::DOUBLE_FAULT_IST_INDEX;
+use crate::serial;
+use crate::x64;
 use acpi::AcpiTables;
 use log::{error, info, trace};
 use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
@@ -188,7 +188,7 @@ extern "x86-interrupt" fn kbd_handler(_stack_frame: x64::InterruptStackFrame) {
 
 extern "x86-interrupt" fn com1_handler(_stack_frame: x64::InterruptStackFrame) {
     without_interrupts(|| {
-        let input = default_serial_port().receive();
+        let input = serial::default_port().receive();
         info!("COM1: {}", char::from(input));
     });
     unsafe { LAPIC.wait().set_eoi(0) };

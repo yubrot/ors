@@ -1,34 +1,27 @@
 use super::{font, Color};
-use core::{mem, ptr};
+use alloc::boxed::Box;
 use ors_common::frame_buffer::{FrameBuffer as RawFrameBuffer, PixelFormat as RawPixelFormat};
+use spin::{Mutex, MutexGuard, Once};
 
-const FRAME_BUFFER_PAYLOAD_SIZE: usize = mem::size_of::<RgbFrameBuffer>();
-static_assertions::assert_eq_size!(RgbFrameBuffer, BgrFrameBuffer);
+type BoxedFrameBuffer = Box<dyn FrameBuffer + Send + Sync>;
 
-pub struct FrameBufferPayload([u8; FRAME_BUFFER_PAYLOAD_SIZE]);
+static FRAME_BUFFER: Once<Mutex<BoxedFrameBuffer>> = Once::new();
 
-impl FrameBufferPayload {
-    pub const fn new() -> Self {
-        Self([0; FRAME_BUFFER_PAYLOAD_SIZE])
-    }
+pub fn frame_buffer() -> MutexGuard<'static, BoxedFrameBuffer> {
+    FRAME_BUFFER.wait().lock()
 }
 
-pub unsafe fn prepare_frame_buffer(
-    fb: RawFrameBuffer,
-    payload: &mut FrameBufferPayload,
-) -> &mut (dyn FrameBuffer + Send + Sync) {
-    match fb.format {
-        RawPixelFormat::Rgb => {
-            let p = &mut payload.0[0] as *mut u8 as *mut RgbFrameBuffer;
-            ptr::write(p, RgbFrameBuffer(fb));
-            &mut *p
-        }
-        RawPixelFormat::Bgr => {
-            let p = &mut payload.0[0] as *mut u8 as *mut BgrFrameBuffer;
-            ptr::write(p, BgrFrameBuffer(fb));
-            &mut *p
-        }
-    }
+pub fn frame_buffer_if_available() -> Option<MutexGuard<'static, BoxedFrameBuffer>> {
+    FRAME_BUFFER.get().map(|m| m.lock())
+}
+
+pub fn initialize_frame_buffer(fb: RawFrameBuffer) {
+    FRAME_BUFFER.call_once(move || {
+        Mutex::new(match fb.format {
+            RawPixelFormat::Rgb => Box::new(RgbFrameBuffer(fb)),
+            RawPixelFormat::Bgr => Box::new(BgrFrameBuffer(fb)),
+        })
+    });
 }
 
 pub trait FrameBuffer {

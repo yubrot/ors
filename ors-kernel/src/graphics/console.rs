@@ -1,6 +1,13 @@
 use super::{font, Color, FrameBuffer};
 use core::fmt;
 use derive_new::new;
+use spin::{Mutex, MutexGuard};
+
+static DEFAULT_CONSOLE: Mutex<Console<80, 25>> = Mutex::new(Console::new());
+
+pub fn default_console() -> MutexGuard<'static, Console<80, 25>> {
+    DEFAULT_CONSOLE.lock()
+}
 
 pub struct Console<const R: usize, const C: usize> {
     init: usize,

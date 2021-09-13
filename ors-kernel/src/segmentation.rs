@@ -1,4 +1,4 @@
-use super::x64::{self, Segment};
+use crate::x64::{self, Segment};
 
 static mut GDT: x64::GlobalDescriptorTable = x64::GlobalDescriptorTable::new();
 static mut TSS: x64::TaskStateSegment = x64::TaskStateSegment::new();

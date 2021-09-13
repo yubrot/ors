@@ -10,7 +10,6 @@
 extern crate alloc;
 
 pub mod allocator;
-pub mod global;
 pub mod graphics;
 pub mod interrupts;
 pub mod logger;
@@ -19,6 +18,7 @@ pub mod pci;
 pub mod phys_memory;
 pub mod qemu;
 pub mod segmentation;
+pub mod serial;
 pub mod x64;
 
 use log::{error, info};
@@ -30,18 +30,15 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     logger::initialize();
     unsafe { segmentation::initialize() };
     unsafe { paging::initialize() };
+    phys_memory::frame_manager().initialize(mm);
     unsafe { interrupts::initialize(rsdp as usize) };
-    global::default_serial_port().init();
-    global::frame_manager().initialize(mm);
-    global::initialize_frame_buffer(unsafe {
-        static mut PAYLOAD: graphics::FrameBufferPayload = graphics::FrameBufferPayload::new();
-        graphics::prepare_frame_buffer(*fb, &mut PAYLOAD)
-    });
-    global::initialize_devices(pci::Device::scan::<32>().unwrap());
-
-    global::frame_buffer().clear(graphics::Color::BLACK);
+    pci::initialize_devices();
+    serial::default_port().init();
 
     interrupts::enable();
+
+    graphics::initialize_frame_buffer(*fb);
+    graphics::frame_buffer().clear(graphics::Color::BLACK);
 
     #[cfg(test)]
     test_main();

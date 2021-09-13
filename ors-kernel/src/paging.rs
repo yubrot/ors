@@ -1,4 +1,4 @@
-use super::x64::{self, PageSize};
+use crate::x64::{self, PageSize};
 use acpi::{AcpiHandler, PhysicalMapping};
 use core::ptr::NonNull;
 
