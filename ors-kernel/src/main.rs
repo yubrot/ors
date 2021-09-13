@@ -24,9 +24,11 @@ pub mod x64;
 use log::{error, info};
 use ors_common::frame_buffer::FrameBuffer as RawFrameBuffer;
 use ors_common::memory_map::MemoryMap;
+use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
 
 #[no_mangle]
 pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u64) {
+    interrupts::disable();
     logger::initialize();
     unsafe { segmentation::initialize() };
     unsafe { paging::initialize() };
@@ -35,18 +37,48 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     pci::initialize_devices();
     serial::default_port().init();
 
-    interrupts::enable();
-
     graphics::initialize_frame_buffer(*fb);
     graphics::frame_buffer().clear(graphics::Color::BLACK);
+
+    interrupts::enable();
 
     #[cfg(test)]
     test_main();
 
     info!("Hello, World!");
 
+    let mut kbd = Keyboard::new(layouts::Jis109Key, ScancodeSet1, HandleControl::Ignore);
+    let mut next_msg = None;
+
     loop {
-        x64::hlt()
+        if let Some(msg) = next_msg
+            .take()
+            .or_else(|| interrupts::message_queue().dequeue())
+        {
+            match msg {
+                interrupts::Message::Kbd(key) => {
+                    if let Ok(Some(e)) = kbd.add_byte(key) {
+                        if let Some(key) = kbd.process_keyevent(e) {
+                            match key {
+                                DecodedKey::RawKey(key) => info!("KBD: {:?}", key),
+                                DecodedKey::Unicode(ch) => info!("KBD: {}", ch),
+                            }
+                        }
+                    }
+                }
+                interrupts::Message::Com1(b) => {
+                    info!("COM1: {}", char::from(b))
+                }
+            }
+        } else {
+            interrupts::disable();
+            if let Some(msg) = interrupts::message_queue().dequeue() {
+                next_msg = Some(msg);
+                interrupts::enable();
+            } else {
+                interrupts::enable_and_hlt();
+            }
+        }
     }
 }
 

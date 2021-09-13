@@ -12,7 +12,7 @@ pub fn frame_buffer() -> MutexGuard<'static, BoxedFrameBuffer> {
 }
 
 pub fn frame_buffer_if_available() -> Option<MutexGuard<'static, BoxedFrameBuffer>> {
-    FRAME_BUFFER.get().map(|m| m.lock())
+    FRAME_BUFFER.get()?.try_lock()
 }
 
 pub fn initialize_frame_buffer(fb: RawFrameBuffer) {

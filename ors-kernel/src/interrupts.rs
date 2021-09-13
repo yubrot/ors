@@ -3,16 +3,21 @@ use crate::segmentation::DOUBLE_FAULT_IST_INDEX;
 use crate::serial;
 use crate::x64;
 use acpi::AcpiTables;
+use heapless::mpmc::Q64 as Queue;
 use log::{error, info, trace};
-use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
-use spin::{Lazy, Mutex, Once};
+use spin::Once;
 
-static mut IDT: x64::InterruptDescriptorTable = x64::InterruptDescriptorTable::new();
-static LAPIC: Once<x64::LApic> = Once::new();
+#[derive(Debug)]
+pub enum Message {
+    Kbd(u8),
+    Com1(u8),
+}
 
-const EXTERNAL_IRQ_OFFSET: u32 = 32; // first 32 entries are reserved by CPU
-const IRQ_KBD: u32 = 1; // Keyboard on PS/2 port
-const IRQ_COM1: u32 = 4; // First serial port
+static MESSAGE_QUEUE: Queue<Message> = Queue::new();
+
+pub fn message_queue() -> &'static Queue<Message> {
+    &MESSAGE_QUEUE
+}
 
 pub unsafe fn initialize(rsdp: usize) {
     initialize_idt();
@@ -24,9 +29,19 @@ pub fn enable() {
     x64::interrupts::enable();
 }
 
+pub fn disable() {
+    x64::interrupts::disable();
+}
+
+pub fn enable_and_hlt() {
+    x64::interrupts::enable_and_hlt();
+}
+
 pub fn without_interrupts<T>(f: impl FnOnce() -> T) -> T {
     x64::interrupts::without_interrupts(f)
 }
+
+static mut IDT: x64::InterruptDescriptorTable = x64::InterruptDescriptorTable::new();
 
 unsafe fn initialize_idt() {
     IDT.breakpoint.set_handler_fn(breakpoint_handler);
@@ -38,6 +53,12 @@ unsafe fn initialize_idt() {
     IDT[(EXTERNAL_IRQ_OFFSET + IRQ_COM1) as usize].set_handler_fn(com1_handler);
     IDT.load();
 }
+
+static LAPIC: Once<x64::LApic> = Once::new();
+
+const EXTERNAL_IRQ_OFFSET: u32 = 32; // first 32 entries are reserved by CPU
+const IRQ_KBD: u32 = 1; // Keyboard on PS/2 port
+const IRQ_COM1: u32 = 4; // First serial port
 
 unsafe fn initialize_apic(rsdp: usize) {
     // https://wiki.osdev.org/MADT
@@ -56,10 +77,12 @@ unsafe fn initialize_apic(rsdp: usize) {
     let ioapic_id = apic.io_apics.first().unwrap().id;
 
     let processor_info = info.processor_info.unwrap();
-    let bp = processor_info.boot_processor;
+    let bsp = processor_info.boot_processor;
     let aps = processor_info.application_processors;
 
-    trace!("{:?}, {:?}, bp = {:?}, aps = {:?}", lapic, ioapic, bp, aps);
+    trace!("{:?}, {:?}, bp = {:?}, aps = {:?}", lapic, ioapic, bsp, aps);
+    assert_eq!(lapic.apic_id(), bsp.local_apic_id);
+    assert_eq!(ioapic.apic_id(), ioapic_id);
 
     LAPIC.call_once(|| lapic);
 
@@ -110,38 +133,39 @@ unsafe fn initialize_apic(rsdp: usize) {
         const DISABLED: u64 = 0x00010000; // Interrupt disabled
 
         let max_intr = ioapic.ver() >> 16 & 0xFF;
-        if ioapic.apic_id() != ioapic_id {
-            panic!("ioapic id mismatch: not a MP");
-        }
 
         // Mark all interrupts edge-triggered, active high, disabled, and not routed to any CPUs.
         for i in 0..max_intr {
             ioapic.set_redirection_table_at(i, DISABLED | (EXTERNAL_IRQ_OFFSET + i) as u64);
         }
 
-        let cpu0 = (bp.local_apic_id as u64) << (24 + 32);
+        let cpu0 = (bsp.local_apic_id as u64) << (24 + 32);
         ioapic.set_redirection_table_at(IRQ_KBD, (EXTERNAL_IRQ_OFFSET + IRQ_KBD) as u64 | cpu0);
         ioapic.set_redirection_table_at(IRQ_COM1, (EXTERNAL_IRQ_OFFSET + IRQ_COM1) as u64 | cpu0);
     }
 }
 
+unsafe fn disable_pic_8259() {
+    x64::Port::new(0xa1).write(0xffu8);
+    x64::Port::new(0x21).write(0xffu8);
+}
+
+// Be careful to avoid deadlocks:
+// https://matklad.github.io/2020/01/02/spinlocks-considered-harmful.html
+
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: x64::InterruptStackFrame) {
-    without_interrupts(|| {
-        info!("EXCEPTION: BREAKPOINT");
-        info!("{:#?}", stack_frame);
-    });
+    info!("EXCEPTION: BREAKPOINT");
+    info!("{:#?}", stack_frame);
 }
 
 extern "x86-interrupt" fn page_fault_handler(
     stack_frame: x64::InterruptStackFrame,
     error_code: x64::PageFaultErrorCode,
 ) {
-    without_interrupts(|| {
-        info!("EXCEPTION: PAGE FAULT");
-        info!("Address: {:?}", x64::Cr2::read());
-        info!("Error Code: {:?}", error_code);
-        info!("{:#?}", stack_frame);
-    });
+    info!("EXCEPTION: PAGE FAULT");
+    info!("Address: {:?}", x64::Cr2::read());
+    info!("Error Code: {:?}", error_code);
+    info!("{:#?}", stack_frame);
 
     loop {
         x64::hlt()
@@ -152,49 +176,22 @@ extern "x86-interrupt" fn double_fault_handler(
     stack_frame: x64::InterruptStackFrame,
     _error_code: u64,
 ) -> ! {
-    without_interrupts(|| {
-        error!("EXCEPTION: DOUBLE FAULT");
-        error!("{:#?}", stack_frame);
-    });
+    error!("EXCEPTION: DOUBLE FAULT");
+    error!("{:#?}", stack_frame);
 
     loop {
         x64::hlt()
     }
 }
 
-static KEYBOARD: Lazy<Mutex<Keyboard<layouts::Jis109Key, ScancodeSet1>>> = Lazy::new(|| {
-    Mutex::new(Keyboard::new(
-        layouts::Jis109Key,
-        ScancodeSet1,
-        HandleControl::Ignore,
-    ))
-});
-
 extern "x86-interrupt" fn kbd_handler(_stack_frame: x64::InterruptStackFrame) {
-    without_interrupts(|| {
-        let mut keyboard = KEYBOARD.lock();
-        if let Ok(Some(e)) = keyboard.add_byte(unsafe { x64::Port::new(0x60).read() }) {
-            if let Some(key) = keyboard.process_keyevent(e) {
-                match key {
-                    DecodedKey::RawKey(key) => info!("KBD: {:?}", key),
-                    DecodedKey::Unicode(ch) => info!("KBD: {}", ch),
-                }
-            }
-        }
-    });
-
+    let msg = Message::Kbd(unsafe { x64::Port::new(0x60).read() });
+    let _ = message_queue().enqueue(msg);
     unsafe { LAPIC.wait().set_eoi(0) };
 }
 
 extern "x86-interrupt" fn com1_handler(_stack_frame: x64::InterruptStackFrame) {
-    without_interrupts(|| {
-        let input = serial::default_port().receive();
-        info!("COM1: {}", char::from(input));
-    });
+    let byte = without_interrupts(|| serial::default_port().receive());
+    let _ = message_queue().enqueue(Message::Com1(byte));
     unsafe { LAPIC.wait().set_eoi(0) };
-}
-
-unsafe fn disable_pic_8259() {
-    x64::Port::new(0xa1).write(0xffu8);
-    x64::Port::new(0x21).write(0xffu8);
 }

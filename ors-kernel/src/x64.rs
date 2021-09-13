@@ -41,6 +41,10 @@ impl LApic {
         ptr::write_volatile(self.ptr.add(offset), value)
     }
 
+    pub unsafe fn apic_id(&self) -> u32 {
+        self.read(0x0020 / 4) >> 24
+    }
+
     pub unsafe fn ver(&self) -> u32 {
         self.read(0x0030 / 4)
     }

@@ -9,6 +9,10 @@ pub fn default_console() -> MutexGuard<'static, Console<80, 25>> {
     DEFAULT_CONSOLE.lock()
 }
 
+pub fn default_console_if_available() -> Option<MutexGuard<'static, Console<80, 25>>> {
+    DEFAULT_CONSOLE.try_lock()
+}
+
 pub struct Console<const R: usize, const C: usize> {
     init: usize,
     cursor: (usize, usize),
