@@ -49,6 +49,7 @@ unsafe fn initialize_idt() {
     IDT.double_fault
         .set_handler_fn(double_fault_handler)
         .set_stack_index(DOUBLE_FAULT_IST_INDEX);
+    IDT[(EXTERNAL_IRQ_OFFSET + IRQ_TIMER) as usize].set_handler_fn(timer_handler);
     IDT[(EXTERNAL_IRQ_OFFSET + IRQ_KBD) as usize].set_handler_fn(kbd_handler);
     IDT[(EXTERNAL_IRQ_OFFSET + IRQ_COM1) as usize].set_handler_fn(com1_handler);
     IDT.load();
@@ -57,6 +58,7 @@ unsafe fn initialize_idt() {
 static LAPIC: Once<x64::LApic> = Once::new();
 
 const EXTERNAL_IRQ_OFFSET: u32 = 32; // first 32 entries are reserved by CPU
+const IRQ_TIMER: u32 = 0;
 const IRQ_KBD: u32 = 1; // Keyboard on PS/2 port
 const IRQ_COM1: u32 = 4; // First serial port
 
@@ -91,6 +93,8 @@ unsafe fn initialize_apic(rsdp: usize) {
     // https://github.com/mit-pdos/xv6-public/blob/master/lapic.c#L55
     {
         const ENABLE: u32 = 0x100;
+        const X1: u32 = 0b1011; // divide by 1 (Divide Configuration Register)
+        const PERIODIC: u32 = 0x20000;
         const MASKED: u32 = 0x10000;
         const BCAST: u32 = 0x80000;
         const INIT: u32 = 0x00500;
@@ -100,7 +104,9 @@ unsafe fn initialize_apic(rsdp: usize) {
         // Enable the Local APIC to receive interrupts by configuring the Spurious Interrupt Vector Register.
         lapic.set_svr(ENABLE | 0xFF);
 
-        // TODO: Timer?
+        lapic.set_tdcr(X1);
+        lapic.set_timer(PERIODIC | (EXTERNAL_IRQ_OFFSET + IRQ_TIMER));
+        lapic.set_ticr(10000000);
 
         // Disable  logical interrupt lines
         lapic.set_lint0(MASKED);
@@ -182,6 +188,10 @@ extern "x86-interrupt" fn double_fault_handler(
     loop {
         x64::hlt()
     }
+}
+
+extern "x86-interrupt" fn timer_handler(_stack_frame: x64::InterruptStackFrame) {
+    unsafe { LAPIC.wait().set_eoi(0) };
 }
 
 extern "x86-interrupt" fn kbd_handler(_stack_frame: x64::InterruptStackFrame) {

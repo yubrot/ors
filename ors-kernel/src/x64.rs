@@ -73,16 +73,43 @@ impl LApic {
         self.write(0x0310 / 4, value)
     }
 
+    // Local Vector Table 0 (TIMER)
+    pub unsafe fn set_timer(&self, value: u32) {
+        self.write(0x0320 / 4, value)
+    }
+
     pub unsafe fn set_pcint(&self, value: u32) {
         self.write(0x0340 / 4, value)
     }
 
+    // Local Vector Table 1 (LINT0)
     pub unsafe fn set_lint0(&self, value: u32) {
         self.write(0x0350 / 4, value)
     }
 
+    // Local Vector Table 2 (LINT1)
     pub unsafe fn set_lint1(&self, value: u32) {
         self.write(0x0360 / 4, value)
+    }
+
+    // Local Vector Table 3 (ERROR)
+    pub unsafe fn set_error(&self, value: u32) {
+        self.write(0x0370 / 4, value)
+    }
+
+    // Timer Initial Count
+    pub unsafe fn set_ticr(&self, value: u32) {
+        self.write(0x0380 / 4, value)
+    }
+
+    // Timer Current Count
+    pub unsafe fn tccr(&self) -> u32 {
+        self.read(0x0390 / 4)
+    }
+
+    // Timer Divide Configuration
+    pub unsafe fn set_tdcr(&self, value: u32) {
+        self.write(0x03E0 / 4, value)
     }
 }
 
