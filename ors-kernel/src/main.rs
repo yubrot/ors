@@ -21,7 +21,6 @@ pub mod segmentation;
 pub mod serial;
 pub mod x64;
 
-use graphics::FrameBufferExt;
 use log::{error, info};
 use ors_common::frame_buffer::FrameBuffer as RawFrameBuffer;
 use ors_common::memory_map::MemoryMap;
@@ -39,8 +38,7 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     pci::initialize_devices();
     serial::default_port().init();
 
-    graphics::initialize_screen_buffer(*fb);
-    graphics::screen_buffer().clear(graphics::Color::BLACK);
+    graphics::initialize_screen_console((*fb).into());
 
     interrupts::enable();
 
@@ -48,22 +46,6 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     test_main();
 
     info!("Hello, World!");
-
-    {
-        let mut fb = graphics::screen_buffer();
-        fb.fill_rect(
-            graphics::Rect::new(50, 50, 100, 100),
-            graphics::Color::WHITE,
-        );
-        for i in 0..128 {
-            let r = i as f64 * core::f64::consts::PI / 64.0;
-            fb.write_pixel(
-                (100.0 + 45.0 * libm::cos(r)) as i32,
-                (100.0 + 45.0 * libm::sin(r)) as i32,
-                graphics::Color::BLACK,
-            );
-        }
-    }
 
     let mut kbd = Keyboard::new(layouts::Jis109Key, ScancodeSet1, HandleControl::Ignore);
     let mut next_msg = None;
@@ -122,7 +104,7 @@ fn alloc_error_handler(layout: alloc::alloc::Layout) -> ! {
 
 #[cfg(test)]
 fn test_runner(tests: &[&dyn Fn()]) {
-    info!("Running {} tests", tests.len());
+    info!("RUNNING {} tests", tests.len());
     for test in tests {
         test();
     }

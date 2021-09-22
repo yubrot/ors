@@ -6,12 +6,9 @@ mod rect;
 
 pub use color::Color;
 pub use console::{
-    default_console, default_console_if_available, Console, ConsoleWriteOptions, ConsoleWriter,
+    initialize_screen_console, screen_console, screen_console_if_available, Console,
 };
-pub use frame_buffer::{
-    initialize_screen_buffer, screen_buffer, screen_buffer_if_available, FrameBuffer,
-    FrameBufferFormat, ScreenBuffer, VecBuffer,
-};
+pub use frame_buffer::{FrameBuffer, FrameBufferFormat, ScreenBuffer, VecBuffer};
 pub use rect::Rect;
 
 pub trait FrameBufferExt: FrameBuffer {
@@ -44,6 +41,24 @@ pub trait FrameBufferExt: FrameBuffer {
             true
         } else {
             false
+        }
+    }
+
+    fn blit(&mut self, x: i32, y: i32, fb: &impl FrameBuffer) {
+        if let Some(rect) = self.rect().intersect(fb.rect().offset(x, y)) {
+            let oy = (rect.y - y) as usize;
+            let ox = (rect.x - x) as usize;
+            let src_stride = fb.stride();
+            let src = fb.bytes();
+            let dest_stride = self.stride();
+            let dest = self.bytes_mut();
+            let l = rect.w as usize * 4;
+
+            for dy in 0..rect.h as usize {
+                let i = ((rect.y as usize + dy) * dest_stride + rect.x as usize) * 4;
+                let j = ((oy + dy) * src_stride + ox) * 4;
+                dest[i..i + l].copy_from_slice(&src[j..j + l]);
+            }
         }
     }
 

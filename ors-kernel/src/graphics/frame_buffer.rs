@@ -3,21 +3,6 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::slice;
 use ors_common::frame_buffer::{FrameBuffer as RawFrameBuffer, PixelFormat as RawPixelFormat};
-use spin::{Mutex, MutexGuard, Once};
-
-static SCREEN_BUFFER: Once<Mutex<ScreenBuffer>> = Once::new();
-
-pub fn screen_buffer() -> MutexGuard<'static, ScreenBuffer> {
-    SCREEN_BUFFER.wait().lock()
-}
-
-pub fn screen_buffer_if_available() -> Option<MutexGuard<'static, ScreenBuffer>> {
-    SCREEN_BUFFER.get()?.try_lock()
-}
-
-pub fn initialize_screen_buffer(fb: RawFrameBuffer) {
-    SCREEN_BUFFER.call_once(move || Mutex::new(fb.into()));
-}
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum FrameBufferFormat {
@@ -59,7 +44,7 @@ pub trait FrameBuffer {
     fn format(&self) -> FrameBufferFormat;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VecBuffer {
     data: Vec<u8>,
     width: usize,

@@ -1,149 +1,107 @@
-use super::{font, Color, FrameBuffer, FrameBufferExt, Rect};
+use super::{font, Color, FrameBuffer, FrameBufferExt, ScreenBuffer, VecBuffer};
+use alloc::collections::{BTreeMap, VecDeque};
+use alloc::vec;
 use core::fmt;
-use derive_new::new;
-use spin::{Mutex, MutexGuard};
+use log::trace;
+use spin::{Mutex, MutexGuard, Once};
 
-static DEFAULT_CONSOLE: Mutex<Console<80, 25>> = Mutex::new(Console::new());
+static SCREEN_CONSOLE: Once<Mutex<Console<ScreenBuffer>>> = Once::new();
 
-pub fn default_console() -> MutexGuard<'static, Console<80, 25>> {
-    DEFAULT_CONSOLE.lock()
+pub fn screen_console() -> MutexGuard<'static, Console<ScreenBuffer>> {
+    SCREEN_CONSOLE.wait().lock()
 }
 
-pub fn default_console_if_available() -> Option<MutexGuard<'static, Console<80, 25>>> {
-    DEFAULT_CONSOLE.try_lock()
+pub fn screen_console_if_available() -> Option<MutexGuard<'static, Console<ScreenBuffer>>> {
+    SCREEN_CONSOLE.get()?.try_lock()
 }
 
-pub struct Console<const R: usize, const C: usize> {
-    init: usize,
-    cursor: (usize, usize),
-    buf: [[char; R]; C],
+pub fn initialize_screen_console(sb: ScreenBuffer) {
+    SCREEN_CONSOLE.call_once(move || {
+        trace!("INITIALIZING screen console");
+        Mutex::new(Console::new(sb, Color::WHITE, Color::BLACK))
+    });
 }
 
-impl<const R: usize, const C: usize> Console<R, C> {
-    pub const fn new() -> Self {
-        Self {
-            init: 0,
-            cursor: (0, 0),
-            buf: [[' '; R]; C],
-        }
-    }
-
-    pub fn clear(&mut self) {
-        *self = Self::new();
-    }
-
-    pub fn put(&mut self, c: char) -> UpdateRequirement {
-        let (x, y) = self.cursor;
-
-        if c == '\n' {
-            if (y + 1) % C == self.init {
-                self.buf[self.init] = [' '; R];
-                self.cursor = (0, self.init);
-                self.init = (self.init + 1) % C;
-                UpdateRequirement::Everything
-            } else {
-                self.cursor = (0, (y + 1) % C);
-                UpdateRequirement::None
-            }
-        } else if x < R {
-            self.buf[y][x] = c;
-            self.cursor = (x + 1, y);
-            UpdateRequirement::At(x, (y + C - self.init) % C)
-        } else {
-            let a = self.put('\n'); // wrapping line feed
-            let b = self.put(c);
-            a.merge(b)
-        }
-    }
-
-    pub fn char_at(&self, x: usize, y: usize) -> char {
-        self.buf[(self.init + y) % C][x]
-    }
-
-    pub fn writer<'a, B: FrameBuffer + ?Sized>(
-        &'a mut self,
-        fb: &'a mut B,
-        options: ConsoleWriteOptions,
-    ) -> ConsoleWriter<'a, B, R, C> {
-        ConsoleWriter::new(self, fb, options)
-    }
-}
-
-pub enum UpdateRequirement {
-    None,
-    Everything,
-    At(usize, usize),
-}
-
-impl UpdateRequirement {
-    pub fn merge(self, other: Self) -> Self {
-        use UpdateRequirement::*;
-        match (self, other) {
-            (Everything, _) | (_, Everything) => Everything,
-            (x @ At(_, _), None) | (None, x @ At(_, _)) => x,
-            _ => None,
-        }
-    }
-}
-
-#[derive(new)]
-pub struct ConsoleWriter<'a, B: ?Sized, const R: usize, const C: usize> {
-    console: &'a mut Console<R, C>,
-    fb: &'a mut B,
-    options: ConsoleWriteOptions,
-}
-
-impl<'a, B: FrameBuffer + ?Sized, const R: usize, const C: usize> ConsoleWriter<'a, B, R, C> {
-    pub fn clear(&mut self) {
-        self.fb.fill_rect(
-            Rect::new(
-                self.options.x,
-                self.options.y,
-                R as u32 * font::WIDTH,
-                C as u32 * font::HEIGHT,
-            ),
-            self.options.bg,
-        );
-        self.console.clear();
-    }
-
-    pub fn write_char_at(&mut self, x: usize, y: usize) {
-        self.fb.write_char(
-            self.options.x + x as i32 * font::WIDTH as i32,
-            self.options.y + y as i32 * font::HEIGHT as i32,
-            self.console.char_at(x, y),
-            self.options.fg,
-            self.options.bg,
-        );
-    }
-}
-
-impl<'a, B: FrameBuffer + ?Sized, const R: usize, const C: usize> fmt::Write
-    for ConsoleWriter<'a, B, R, C>
-{
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        for c in s.chars() {
-            match self.console.put(c) {
-                UpdateRequirement::None => {}
-                UpdateRequirement::Everything => {
-                    for y in 0..C {
-                        for x in 0..R {
-                            self.write_char_at(x, y);
-                        }
-                    }
-                }
-                UpdateRequirement::At(x, y) => self.write_char_at(x, y),
-            }
-        }
-
-        Ok(())
-    }
-}
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, new)]
-pub struct ConsoleWriteOptions {
-    x: i32,
-    y: i32,
+pub struct Console<T> {
+    fb: T,
     fg: Color,
     bg: Color,
+    size: (usize, usize),
+    char_cache: BTreeMap<char, VecBuffer>,
+    rendered_lines: VecDeque<VecBuffer>,
+    cursor: (usize, usize),
+}
+
+impl<T: FrameBuffer> Console<T> {
+    pub fn new(fb: T, fg: Color, bg: Color) -> Self {
+        let format = fb.format();
+        let size = (
+            fb.width() / font::WIDTH as usize,
+            fb.height() / font::HEIGHT as usize,
+        );
+        let line_size = (size.0 * font::WIDTH as usize, font::HEIGHT as usize);
+        Self {
+            fb,
+            fg,
+            bg,
+            size,
+            char_cache: BTreeMap::new(),
+            rendered_lines: vec![VecBuffer::new(line_size.0, line_size.1, format); size.1].into(),
+            cursor: (0, 0),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        for rendered_line in self.rendered_lines.iter_mut() {
+            rendered_line.clear(self.bg);
+        }
+        self.cursor = (0, 0);
+    }
+
+    pub fn render(&mut self) {
+        let ox = (self.fb.width() as i32 - self.size.0 as i32 * font::WIDTH as i32) / 2;
+        let oy = (self.fb.height() as i32 - self.size.1 as i32 * font::HEIGHT as i32) / 2;
+        for (i, rendered_line) in self.rendered_lines.iter().enumerate() {
+            self.fb
+                .blit(ox, oy + i as i32 * font::HEIGHT as i32, rendered_line);
+        }
+    }
+
+    pub fn put(&mut self, c: char) {
+        // wrapping / line feed
+        if c == '\n' || self.cursor.0 >= self.size.0 {
+            self.cursor.0 = 0;
+            self.cursor.1 += 1;
+        }
+        // remove the first line
+        if self.cursor.1 >= self.size.1 {
+            self.cursor.1 = self.size.1 - 1;
+            let mut next_line = self.rendered_lines.pop_front().unwrap();
+            next_line.clear(self.bg);
+            self.rendered_lines.push_back(next_line);
+        }
+        if c != '\n' {
+            let fg = self.fg;
+            let bg = self.bg;
+            let format = self.fb.format();
+            let char_buf = self.char_cache.entry(c).or_insert_with_key(|c| {
+                let mut buf = VecBuffer::new(font::WIDTH as usize, font::HEIGHT as usize, format);
+                buf.write_char(0, 0, *c, fg, bg);
+                buf
+            });
+            let (x, y) = self.cursor;
+            self.rendered_lines[y].blit(x as i32 * font::WIDTH as i32, 0, char_buf);
+            self.cursor.0 += 1;
+        }
+    }
+}
+
+impl<T: FrameBuffer> fmt::Write for Console<T> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        for c in s.chars() {
+            self.put(c);
+        }
+        self.render();
+        Ok(())
+    }
 }

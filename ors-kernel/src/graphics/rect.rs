@@ -28,6 +28,10 @@ impl Rect {
     pub fn contains(self, x: i32, y: i32) -> bool {
         self.x <= x && x < self.x + self.w as i32 && self.y <= y && y < self.y + self.h as i32
     }
+
+    pub fn offset(self, x: i32, y: i32) -> Self {
+        Self::new(self.x + x, self.y + y, self.w, self.h)
+    }
 }
 
 #[cfg(test)]

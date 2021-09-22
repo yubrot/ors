@@ -126,6 +126,7 @@ impl BitmapFrameManager {
     }
 
     pub fn initialize(&mut self, mm: &ors_common::memory_map::MemoryMap) {
+        trace!("INITIALIZING PhysMemoryManager");
         let mut phys_available_end = 0;
         for d in mm.descriptors() {
             let phys_start = d.phys_start as usize;

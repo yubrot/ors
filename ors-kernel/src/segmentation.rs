@@ -1,3 +1,5 @@
+use log::trace;
+
 use crate::x64::{self, Segment};
 
 static mut GDT: x64::GlobalDescriptorTable = x64::GlobalDescriptorTable::new();
@@ -6,6 +8,7 @@ static mut TSS: x64::TaskStateSegment = x64::TaskStateSegment::new();
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
 
 pub unsafe fn initialize() {
+    trace!("INITIALIZING segmentation");
     TSS.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = {
         const STACK_SIZE: usize = 4096 * 5;
         static mut STACK: [u8; STACK_SIZE] = [0; STACK_SIZE];

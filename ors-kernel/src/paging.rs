@@ -1,6 +1,7 @@
 use crate::x64::{self, PageSize};
 use acpi::{AcpiHandler, PhysicalMapping};
 use core::ptr::NonNull;
+use log::trace;
 
 const EMPTY_PAGE_TABLE: x64::PageTable = x64::PageTable::new();
 
@@ -9,6 +10,7 @@ static mut PDP_TABLE: x64::PageTable = x64::PageTable::new();
 static mut PAGE_DIRECTORY: [x64::PageTable; 64] = [EMPTY_PAGE_TABLE; 64]; // supports up to 64GiB
 
 pub unsafe fn initialize() {
+    trace!("INITIALIZING paging");
     initialize_identity_mapping();
 }
 

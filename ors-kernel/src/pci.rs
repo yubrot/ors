@@ -4,6 +4,7 @@ use crate::x64;
 use bit_field::BitField;
 use derive_new::new;
 use heapless::Vec;
+use log::trace;
 use spin::Once;
 
 static DEVICES: Once<Vec<Device, 32>> = Once::new();
@@ -13,7 +14,10 @@ pub fn devices() -> &'static Vec<Device, 32> {
 }
 
 pub fn initialize_devices() {
-    DEVICES.call_once(|| Device::scan::<32>().unwrap());
+    DEVICES.call_once(|| {
+        trace!("INITIALIZING PCI devices");
+        Device::scan::<32>().unwrap()
+    });
 }
 
 // https://wiki.osdev.org/PCI
