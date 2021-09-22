@@ -1,121 +1,161 @@
-use super::{font, Color};
-use alloc::boxed::Box;
+use super::Color;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::slice;
 use ors_common::frame_buffer::{FrameBuffer as RawFrameBuffer, PixelFormat as RawPixelFormat};
 use spin::{Mutex, MutexGuard, Once};
 
-type BoxedFrameBuffer = Box<dyn FrameBuffer + Send + Sync>;
+static SCREEN_BUFFER: Once<Mutex<ScreenBuffer>> = Once::new();
 
-static FRAME_BUFFER: Once<Mutex<BoxedFrameBuffer>> = Once::new();
-
-pub fn frame_buffer() -> MutexGuard<'static, BoxedFrameBuffer> {
-    FRAME_BUFFER.wait().lock()
+pub fn screen_buffer() -> MutexGuard<'static, ScreenBuffer> {
+    SCREEN_BUFFER.wait().lock()
 }
 
-pub fn frame_buffer_if_available() -> Option<MutexGuard<'static, BoxedFrameBuffer>> {
-    FRAME_BUFFER.get()?.try_lock()
+pub fn screen_buffer_if_available() -> Option<MutexGuard<'static, ScreenBuffer>> {
+    SCREEN_BUFFER.get()?.try_lock()
 }
 
-pub fn initialize_frame_buffer(fb: RawFrameBuffer) {
-    FRAME_BUFFER.call_once(move || {
-        Mutex::new(match fb.format {
-            RawPixelFormat::Rgb => Box::new(RgbFrameBuffer(fb)),
-            RawPixelFormat::Bgr => Box::new(BgrFrameBuffer(fb)),
-        })
-    });
+pub fn initialize_screen_buffer(fb: RawFrameBuffer) {
+    SCREEN_BUFFER.call_once(move || Mutex::new(fb.into()));
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum FrameBufferFormat {
+    Rgbx, // [R, G, B, _, R, G, B, _, ..; stride * height * 4]
+    Bgrx, // [B, G, R, _, B, G, R, _, ..; stride * height * 4]
+}
+
+impl FrameBufferFormat {
+    pub fn encoder(&self) -> fn(Color) -> [u8; 4] {
+        match self {
+            Self::Rgbx => |c| [c.r, c.g, c.b, 255],
+            Self::Bgrx => |c| [c.b, c.g, c.r, 255],
+        }
+    }
+
+    pub fn decoder(&self) -> fn([u8; 4]) -> Color {
+        match self {
+            Self::Rgbx => |a| Color::new(a[0], a[1], a[2]),
+            Self::Bgrx => |a| Color::new(a[2], a[1], a[0]),
+        }
+    }
+}
+
+impl From<RawPixelFormat> for FrameBufferFormat {
+    fn from(f: RawPixelFormat) -> Self {
+        match f {
+            RawPixelFormat::Rgb => Self::Rgbx,
+            RawPixelFormat::Bgr => Self::Bgrx,
+        }
+    }
 }
 
 pub trait FrameBuffer {
-    fn width(&self) -> i32;
-    fn height(&self) -> i32;
-    fn write_pixel(&mut self, x: i32, y: i32, color: Color);
+    fn bytes(&self) -> &[u8];
+    fn bytes_mut(&mut self) -> &mut [u8];
+    fn width(&self) -> usize;
+    fn height(&self) -> usize;
+    fn stride(&self) -> usize;
+    fn format(&self) -> FrameBufferFormat;
+}
 
-    fn write_char(&mut self, x: i32, y: i32, c: char, color: Color) {
-        font::write_ascii(self, x, y, c, color);
-    }
+#[derive(Debug)]
+pub struct VecBuffer {
+    data: Vec<u8>,
+    width: usize,
+    height: usize,
+    format: FrameBufferFormat,
+}
 
-    fn write_string(&mut self, x: i32, y: i32, s: &str, color: Color) {
-        for (i, c) in s.chars().enumerate() {
-            self.write_char(x + (font::WIDTH * i) as i32, y, c, color);
+impl VecBuffer {
+    pub fn new(width: usize, height: usize, format: FrameBufferFormat) -> Self {
+        Self {
+            data: vec![0; width * height * 4],
+            width,
+            height,
+            format,
         }
-    }
-
-    fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: Color) {
-        for dx in 0..w {
-            for dy in 0..h {
-                self.write_pixel(x + dx, y + dy, color);
-            }
-        }
-    }
-
-    fn clear(&mut self, color: Color) {
-        self.fill_rect(0, 0, self.width(), self.height(), color);
     }
 }
 
-impl FrameBuffer for () {
-    fn width(&self) -> i32 {
-        0
+impl FrameBuffer for VecBuffer {
+    fn bytes(&self) -> &[u8] {
+        self.data.as_slice()
     }
 
-    fn height(&self) -> i32 {
-        0
+    fn bytes_mut(&mut self) -> &mut [u8] {
+        self.data.as_mut_slice()
     }
 
-    fn write_pixel(&mut self, _x: i32, _y: i32, _color: Color) {}
+    fn width(&self) -> usize {
+        self.width
+    }
+
+    fn height(&self) -> usize {
+        self.height
+    }
+
+    fn stride(&self) -> usize {
+        self.width
+    }
+
+    fn format(&self) -> FrameBufferFormat {
+        self.format
+    }
 }
 
-struct RgbFrameBuffer(pub ors_common::frame_buffer::FrameBuffer);
+#[derive(Debug)]
+pub struct ScreenBuffer {
+    ptr: *mut u8,
+    stride: usize,
+    width: usize,
+    height: usize,
+    format: FrameBufferFormat,
+}
 
-unsafe impl Send for RgbFrameBuffer {}
-
-unsafe impl Sync for RgbFrameBuffer {}
-
-impl FrameBuffer for RgbFrameBuffer {
-    fn width(&self) -> i32 {
-        self.0.resolution.0 as i32
-    }
-
-    fn height(&self) -> i32 {
-        self.0.resolution.1 as i32
-    }
-
-    fn write_pixel(&mut self, x: i32, y: i32, color: Color) {
-        if x < 0 || self.width() <= x || y < 0 || self.height() <= y {
-            return;
-        }
+impl FrameBuffer for ScreenBuffer {
+    fn bytes(&self) -> &[u8] {
         unsafe {
-            let offset = (4 * (self.0.stride * y as u32 + x as u32)) as usize;
-            *self.0.frame_buffer.add(offset) = color.r;
-            *self.0.frame_buffer.add(offset + 1) = color.g;
-            *self.0.frame_buffer.add(offset + 2) = color.b;
+            slice::from_raw_parts(
+                self.ptr as *const u8,
+                (self.stride * self.height * 4) as usize,
+            )
+        }
+    }
+
+    fn bytes_mut(&mut self) -> &mut [u8] {
+        unsafe { slice::from_raw_parts_mut(self.ptr, (self.stride * self.height * 4) as usize) }
+    }
+
+    fn width(&self) -> usize {
+        self.width
+    }
+
+    fn height(&self) -> usize {
+        self.height
+    }
+
+    fn format(&self) -> FrameBufferFormat {
+        self.format
+    }
+
+    fn stride(&self) -> usize {
+        self.stride
+    }
+}
+
+impl From<RawFrameBuffer> for ScreenBuffer {
+    fn from(fb: RawFrameBuffer) -> Self {
+        Self {
+            ptr: fb.frame_buffer,
+            stride: fb.stride as usize,
+            width: fb.resolution.0 as usize,
+            height: fb.resolution.1 as usize,
+            format: fb.format.into(),
         }
     }
 }
 
-struct BgrFrameBuffer(pub ors_common::frame_buffer::FrameBuffer);
+unsafe impl Send for ScreenBuffer {}
 
-unsafe impl Send for BgrFrameBuffer {}
-
-unsafe impl Sync for BgrFrameBuffer {}
-
-impl FrameBuffer for BgrFrameBuffer {
-    fn width(&self) -> i32 {
-        self.0.resolution.0 as i32
-    }
-
-    fn height(&self) -> i32 {
-        self.0.resolution.1 as i32
-    }
-
-    fn write_pixel(&mut self, x: i32, y: i32, color: Color) {
-        if x < 0 || self.width() <= x || y < 0 || self.height() <= y {
-            return;
-        }
-        unsafe {
-            let offset = (4 * (self.0.stride * y as u32 + x as u32)) as usize;
-            *self.0.frame_buffer.add(offset) = color.b;
-            *self.0.frame_buffer.add(offset + 1) = color.g;
-            *self.0.frame_buffer.add(offset + 2) = color.r;
-        }
-    }
-}
+unsafe impl Sync for ScreenBuffer {}

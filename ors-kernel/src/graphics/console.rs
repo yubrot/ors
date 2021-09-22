@@ -1,4 +1,4 @@
-use super::{font, Color, FrameBuffer};
+use super::{font, Color, FrameBuffer, FrameBufferExt, Rect};
 use core::fmt;
 use derive_new::new;
 use spin::{Mutex, MutexGuard};
@@ -96,28 +96,24 @@ pub struct ConsoleWriter<'a, B: ?Sized, const R: usize, const C: usize> {
 impl<'a, B: FrameBuffer + ?Sized, const R: usize, const C: usize> ConsoleWriter<'a, B, R, C> {
     pub fn clear(&mut self) {
         self.fb.fill_rect(
-            self.options.x,
-            self.options.y,
-            (R * font::WIDTH) as i32,
-            (C * font::HEIGHT) as i32,
+            Rect::new(
+                self.options.x,
+                self.options.y,
+                R as u32 * font::WIDTH,
+                C as u32 * font::HEIGHT,
+            ),
             self.options.bg,
         );
         self.console.clear();
     }
 
     pub fn write_char_at(&mut self, x: usize, y: usize) {
-        self.fb.fill_rect(
-            self.options.x + (x * font::WIDTH) as i32,
-            self.options.y + (y * font::HEIGHT) as i32,
-            font::WIDTH as i32,
-            font::HEIGHT as i32,
-            self.options.bg,
-        );
         self.fb.write_char(
-            self.options.x + (x * font::WIDTH) as i32,
-            self.options.y + (y * font::HEIGHT) as i32,
+            self.options.x + x as i32 * font::WIDTH as i32,
+            self.options.y + y as i32 * font::HEIGHT as i32,
             self.console.char_at(x, y),
             self.options.fg,
+            self.options.bg,
         );
     }
 }

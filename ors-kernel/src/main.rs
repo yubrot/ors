@@ -21,6 +21,7 @@ pub mod segmentation;
 pub mod serial;
 pub mod x64;
 
+use graphics::FrameBufferExt;
 use log::{error, info};
 use ors_common::frame_buffer::FrameBuffer as RawFrameBuffer;
 use ors_common::memory_map::MemoryMap;
@@ -29,6 +30,7 @@ use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
 #[no_mangle]
 pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u64) {
     interrupts::disable();
+
     logger::initialize();
     unsafe { segmentation::initialize() };
     unsafe { paging::initialize() };
@@ -37,8 +39,8 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     pci::initialize_devices();
     serial::default_port().init();
 
-    graphics::initialize_frame_buffer(*fb);
-    graphics::frame_buffer().clear(graphics::Color::BLACK);
+    graphics::initialize_screen_buffer(*fb);
+    graphics::screen_buffer().clear(graphics::Color::BLACK);
 
     interrupts::enable();
 
@@ -46,6 +48,22 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     test_main();
 
     info!("Hello, World!");
+
+    {
+        let mut fb = graphics::screen_buffer();
+        fb.fill_rect(
+            graphics::Rect::new(50, 50, 100, 100),
+            graphics::Color::WHITE,
+        );
+        for i in 0..128 {
+            let r = i as f64 * core::f64::consts::PI / 64.0;
+            fb.write_pixel(
+                (100.0 + 45.0 * libm::cos(r)) as i32,
+                (100.0 + 45.0 * libm::sin(r)) as i32,
+                graphics::Color::BLACK,
+            );
+        }
+    }
 
     let mut kbd = Keyboard::new(layouts::Jis109Key, ScancodeSet1, HandleControl::Ignore);
     let mut next_msg = None;

@@ -26,12 +26,12 @@ impl log::Log for KernelLogger {
             // framebuffer will be removed as we continue to improve the graphics implementation.
             #[cfg(not(test))]
             if let (Some(mut fb), Some(mut console)) = (
-                graphics::frame_buffer_if_available(),
+                graphics::screen_buffer_if_available(),
                 graphics::default_console_if_available(),
             ) {
                 writeln!(
                     console.writer(
-                        &mut **fb,
+                        &mut *fb,
                         ConsoleWriteOptions::new(0, 0, Color::WHITE, Color::BLACK),
                     ),
                     "{}: {}",
