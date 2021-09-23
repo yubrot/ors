@@ -49,6 +49,7 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
 
     let mut kbd = Keyboard::new(layouts::Jis109Key, ScancodeSet1, HandleControl::Ignore);
     let mut next_msg = None;
+    let mut tick = 0usize;
 
     loop {
         if let Some(msg) = next_msg
@@ -68,6 +69,13 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
                 }
                 interrupts::Message::Com1(b) => {
                     info!("COM1: {}", char::from(b))
+                }
+                interrupts::Message::Timer => {
+                    tick += 1;
+                    if tick % interrupts::TIMER_FREQ as usize == 0 {
+                        info!("COUNT: {}", tick / interrupts::TIMER_FREQ as usize);
+                    }
+                    graphics::screen_console().render();
                 }
             }
         } else {

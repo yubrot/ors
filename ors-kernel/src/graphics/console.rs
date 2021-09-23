@@ -101,7 +101,6 @@ impl<T: FrameBuffer> fmt::Write for Console<T> {
         for c in s.chars() {
             self.put(c);
         }
-        self.render();
         Ok(())
     }
 }

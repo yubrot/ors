@@ -2,15 +2,19 @@ use crate::paging::KernelAcpiHandler;
 use crate::segmentation::DOUBLE_FAULT_IST_INDEX;
 use crate::serial;
 use crate::x64;
+use acpi::platform::address::AddressSpace;
 use acpi::AcpiTables;
 use heapless::mpmc::Q64 as Queue;
 use log::{error, info, trace};
 use spin::Once;
 
+pub const TIMER_FREQ: u32 = 100;
+
 #[derive(Debug)]
 pub enum Message {
     Kbd(u8),
     Com1(u8),
+    Timer,
 }
 
 static MESSAGE_QUEUE: Queue<Message> = Queue::new();
@@ -78,6 +82,12 @@ unsafe fn initialize_apic(rsdp: usize) {
     let ioapic = x64::IoApic::new(apic.io_apics.first().unwrap().address as u64);
     let ioapic_id = apic.io_apics.first().unwrap().id;
 
+    // https://wiki.osdev.org/ACPI_Timer
+    let pm_timer = info.pm_timer.expect("Could not find ACPI PM Timer");
+    assert_eq!(pm_timer.base.address_space, AddressSpace::SystemIo); // TODO: MMIO Support
+    assert_eq!(pm_timer.base.bit_width, 32);
+    let pm_timer_port = x64::Port::<u32>::new(pm_timer.base.address as u16);
+
     let processor_info = info.processor_info.unwrap();
     let bsp = processor_info.boot_processor;
     let aps = processor_info.application_processors;
@@ -94,7 +104,7 @@ unsafe fn initialize_apic(rsdp: usize) {
     {
         const ENABLE: u32 = 0x100;
         const X1: u32 = 0b1011; // divide by 1 (Divide Configuration Register)
-        const PERIODIC: u32 = 0x20000;
+        const PERIODIC: u32 = 0x20000; // vs ONE_SHOT
         const MASKED: u32 = 0x10000;
         const BCAST: u32 = 0x80000;
         const INIT: u32 = 0x00500;
@@ -104,9 +114,18 @@ unsafe fn initialize_apic(rsdp: usize) {
         // Enable the Local APIC to receive interrupts by configuring the Spurious Interrupt Vector Register.
         lapic.set_svr(ENABLE | 0xFF);
 
+        // Measure the frequency of the Local APIC Timer
+        lapic.set_tdcr(X1);
+        lapic.set_timer(MASKED);
+        lapic.set_ticr(u32::MAX); // start
+        wait_milliseconds_with_pm_timer(pm_timer_port, pm_timer.supports_32bit, 100);
+        let measured_lapic_timer_freq = (u32::MAX - lapic.tccr()) * 10;
+        lapic.set_ticr(0); // stop
+
+        // Enable timer interrupts
         lapic.set_tdcr(X1);
         lapic.set_timer(PERIODIC | (EXTERNAL_IRQ_OFFSET + IRQ_TIMER));
-        lapic.set_ticr(10000000);
+        lapic.set_ticr(measured_lapic_timer_freq / TIMER_FREQ);
 
         // Disable  logical interrupt lines
         lapic.set_lint0(MASKED);
@@ -156,6 +175,19 @@ unsafe fn disable_pic_8259() {
     x64::Port::new(0x21).write(0xffu8);
 }
 
+fn wait_milliseconds_with_pm_timer(mut time: x64::Port<u32>, supports_32bit: bool, msec: u32) {
+    const PM_TIMER_FREQ: usize = 3579545;
+    let start = unsafe { time.read() };
+    let mut end = start.wrapping_add((PM_TIMER_FREQ * msec as usize / 1000) as u32);
+    if !supports_32bit {
+        end &= 0x00ffffff;
+    }
+    if end < start {
+        while unsafe { time.read() } >= start {}
+    }
+    while unsafe { time.read() } < end {}
+}
+
 // Be careful to avoid deadlocks:
 // https://matklad.github.io/2020/01/02/spinlocks-considered-harmful.html
 
@@ -191,6 +223,8 @@ extern "x86-interrupt" fn double_fault_handler(
 }
 
 extern "x86-interrupt" fn timer_handler(_stack_frame: x64::InterruptStackFrame) {
+    let msg = Message::Timer;
+    let _ = message_queue().enqueue(msg);
     unsafe { LAPIC.wait().set_eoi(0) };
 }
 
