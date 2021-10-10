@@ -2,19 +2,21 @@ use crate::x64::{self, PageSize};
 use acpi::{AcpiHandler, PhysicalMapping};
 use core::ptr::NonNull;
 use log::trace;
+use spin::Lazy;
 
 const EMPTY_PAGE_TABLE: x64::PageTable = x64::PageTable::new();
 
+static PAGE_TABLE: Lazy<x64::PhysFrame> = Lazy::new(|| unsafe { initialize_identity_mapping() });
 static mut PML4_TABLE: x64::PageTable = x64::PageTable::new();
 static mut PDP_TABLE: x64::PageTable = x64::PageTable::new();
 static mut PAGE_DIRECTORY: [x64::PageTable; 64] = [EMPTY_PAGE_TABLE; 64]; // supports up to 64GiB
 
 pub unsafe fn initialize() {
     trace!("INITIALIZING paging");
-    initialize_identity_mapping();
+    x64::Cr3::write(*PAGE_TABLE, x64::Cr3Flags::empty());
 }
 
-unsafe fn initialize_identity_mapping() {
+unsafe fn initialize_identity_mapping() -> x64::PhysFrame {
     // Initialize identity mapping (always available but user inaccessible)
     use x64::PageTableFlags as Flags;
 
@@ -43,10 +45,13 @@ unsafe fn initialize_identity_mapping() {
             p.set_addr(addr, flags | Flags::HUGE_PAGE);
         }
     }
-    x64::Cr3::write(phys_frame(&PML4_TABLE), x64::Cr3Flags::empty());
+
+    phys_frame(&PML4_TABLE)
 }
 
-pub unsafe fn mapper() -> impl x64::Mapper<x64::Size4KiB> + x64::Translate {
+#[allow(dead_code)]
+unsafe fn mapper() -> impl x64::Mapper<x64::Size4KiB> + x64::Translate {
+    let _ = Lazy::force(&PAGE_TABLE);
     // Since ors uses identity mapping, we can use OffsetPageTable with offset=0.
     // TODO: Replace it with manually implemented one
     x64::OffsetPageTable::new(&mut PML4_TABLE, x64::VirtAddr::zero())

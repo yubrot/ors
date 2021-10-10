@@ -31,7 +31,7 @@ use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
 pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u64) {
     interrupts::disable();
 
-    logger::initialize();
+    logger::register();
     unsafe { segmentation::initialize() };
     unsafe { paging::initialize() };
     phys_memory::frame_manager().initialize(mm);

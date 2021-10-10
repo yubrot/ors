@@ -4,7 +4,7 @@ use crate::interrupts;
 use crate::serial;
 use core::fmt::Write;
 
-pub fn initialize() {
+pub fn register() {
     log::set_logger(&KernelLogger).unwrap();
     #[cfg(test)]
     log::set_max_level(log::LevelFilter::Trace);

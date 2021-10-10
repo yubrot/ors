@@ -1,7 +1,7 @@
+use crate::x64::{self, Segment};
 use log::trace;
 
-use crate::x64::{self, Segment};
-
+// TODO: GDT needs to be created for each processor.
 static mut GDT: x64::GlobalDescriptorTable = x64::GlobalDescriptorTable::new();
 static mut TSS: x64::TaskStateSegment = x64::TaskStateSegment::new();
 
