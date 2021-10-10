@@ -5,7 +5,7 @@ use crate::x64;
 use acpi::platform::address::AddressSpace;
 use acpi::AcpiTables;
 use heapless::mpmc::Q64 as Queue;
-use log::{error, info, trace};
+use log::trace;
 use spin::Once;
 
 pub const TIMER_FREQ: u32 = 100;
@@ -192,18 +192,18 @@ fn wait_milliseconds_with_pm_timer(mut time: x64::Port<u32>, supports_32bit: boo
 // https://matklad.github.io/2020/01/02/spinlocks-considered-harmful.html
 
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: x64::InterruptStackFrame) {
-    info!("EXCEPTION: BREAKPOINT");
-    info!("{:#?}", stack_frame);
+    sprintln!("EXCEPTION: BREAKPOINT");
+    sprintln!("{:#?}", stack_frame);
 }
 
 extern "x86-interrupt" fn page_fault_handler(
     stack_frame: x64::InterruptStackFrame,
     error_code: x64::PageFaultErrorCode,
 ) {
-    info!("EXCEPTION: PAGE FAULT");
-    info!("Address: {:?}", x64::Cr2::read());
-    info!("Error Code: {:?}", error_code);
-    info!("{:#?}", stack_frame);
+    sprintln!("EXCEPTION: PAGE FAULT");
+    sprintln!("Address: {:?}", x64::Cr2::read());
+    sprintln!("Error Code: {:?}", error_code);
+    sprintln!("{:#?}", stack_frame);
 
     loop {
         x64::hlt()
@@ -214,8 +214,8 @@ extern "x86-interrupt" fn double_fault_handler(
     stack_frame: x64::InterruptStackFrame,
     _error_code: u64,
 ) -> ! {
-    error!("EXCEPTION: DOUBLE FAULT");
-    error!("{:#?}", stack_frame);
+    sprintln!("EXCEPTION: DOUBLE FAULT");
+    sprintln!("{:#?}", stack_frame);
 
     loop {
         x64::hlt()

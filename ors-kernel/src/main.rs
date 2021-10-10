@@ -9,6 +9,8 @@
 
 extern crate alloc;
 
+#[macro_use]
+pub mod serial;
 pub mod allocator;
 pub mod cpu;
 pub mod graphics;
@@ -19,10 +21,9 @@ pub mod pci;
 pub mod phys_memory;
 pub mod qemu;
 pub mod segmentation;
-pub mod serial;
 pub mod x64;
 
-use log::{error, info};
+use log::info;
 use ors_common::frame_buffer::FrameBuffer as RawFrameBuffer;
 use ors_common::memory_map::MemoryMap;
 use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
@@ -93,7 +94,7 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    error!("{}", info);
+    sprintln!("{}", info);
 
     #[cfg(test)]
     qemu::exit(qemu::ExitCode::Failure);
