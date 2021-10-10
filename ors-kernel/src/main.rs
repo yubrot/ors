@@ -16,6 +16,7 @@ pub mod cpu;
 pub mod graphics;
 pub mod interrupts;
 pub mod logger;
+pub mod mutex;
 pub mod paging;
 pub mod pci;
 pub mod phys_memory;
@@ -30,8 +31,8 @@ use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
 
 #[no_mangle]
 pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u64) {
-    interrupts::disable();
-
+    x64::interrupts::enable(); // To ensure that interrupts are enabled by default
+    let cli = interrupts::Cli::new();
     logger::register();
     unsafe { segmentation::initialize() };
     unsafe { paging::initialize() };
@@ -41,8 +42,7 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     serial::default_port().init();
 
     graphics::initialize_screen_console((*fb).into());
-
-    interrupts::enable();
+    drop(cli);
 
     #[cfg(test)]
     test_main();
@@ -81,12 +81,12 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
                 }
             }
         } else {
-            interrupts::disable();
+            let cli = interrupts::Cli::new();
             if let Some(msg) = interrupts::message_queue().dequeue() {
                 next_msg = Some(msg);
-                interrupts::enable();
+                drop(cli);
             } else {
-                interrupts::enable_and_hlt();
+                cli.drop_and_hlt();
             }
         }
     }

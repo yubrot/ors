@@ -61,6 +61,10 @@ impl Cpu {
         }))
     }
 
+    /// Get information about the CPU.
+    /// This Mutex does not get interrupt lock (`crate::interrupts::Cli`).
+    /// Moreover, acquiring and releasing `crate::mutex::Mutex` will lock this mutex through interrupt lock.
+    /// We need to be careful about deadlocks when using this method.
     pub fn info(self) -> &'static Mutex<CpuInfo> {
         match self {
             Self::BootStrap => &BOOT_STRAP_CPU_INFO,
@@ -75,11 +79,15 @@ impl Cpu {
 
 #[derive(Debug, Clone, Copy)]
 pub struct CpuInfo {
-    // TODO
+    pub ncli: u32,  // Depth of pushcli (processing with interrupts disabled) nesting
+    pub zcli: bool, // Were interrupts disabled before pushcli?
 }
 
 impl CpuInfo {
     const fn new() -> Self {
-        Self {}
+        Self {
+            ncli: 0,
+            zcli: false, // interrupts are enabled by default
+        }
     }
 }

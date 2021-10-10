@@ -1,4 +1,4 @@
-use spin::{Mutex, MutexGuard};
+use crate::mutex::{Mutex, MutexGuard};
 pub use uart_16550::SerialPort as Port;
 
 const DEFAULT_PORT_ADDRESS: u16 = 0x3f8;

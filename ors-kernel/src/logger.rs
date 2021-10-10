@@ -1,6 +1,4 @@
-#[cfg(not(test))]
 use crate::graphics;
-use crate::interrupts;
 use crate::serial;
 use core::fmt::Write;
 
@@ -17,16 +15,10 @@ impl log::Log for KernelLogger {
     }
 
     fn log(&self, record: &log::Record) {
-        interrupts::without_interrupts(|| {
-            // FIXME: If an interrupt occurs during frame buffer processing, logs in that
-            // interrupt will not be written to the frame buffer.
-            #[cfg(not(test))]
-            if let Some(mut c) = graphics::screen_console_if_available() {
-                writeln!(&mut *c, "{}: {}", record.level(), record.args()).unwrap();
-            }
-
-            writeln!(serial::default_port(), "{}", record.args()).unwrap();
-        });
+        if let Some(mut sc) = graphics::screen_console_if_initialized() {
+            writeln!(sc, "{}: {}", record.level(), record.args()).unwrap();
+        }
+        writeln!(serial::default_port(), "{}", record.args()).unwrap();
     }
 
     fn flush(&self) {}

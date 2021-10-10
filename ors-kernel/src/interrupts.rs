@@ -1,9 +1,11 @@
+use crate::cpu;
 use crate::paging::KernelAcpiHandler;
 use crate::segmentation::DOUBLE_FAULT_IST_INDEX;
 use crate::serial;
 use crate::x64;
 use acpi::platform::address::AddressSpace;
 use acpi::AcpiTables;
+use core::mem;
 use heapless::mpmc::Q64 as Queue;
 use log::trace;
 use spin::Once;
@@ -29,20 +31,51 @@ pub unsafe fn initialize(rsdp: usize) {
     initialize_apic(rsdp);
 }
 
-pub fn enable() {
-    x64::interrupts::enable();
+/// Clear Interrupt Flag. Interrupts are disabled while this value is alive.
+#[derive(Debug)]
+pub struct Cli;
+
+impl Cli {
+    pub fn new() -> Self {
+        let cli = !x64::interrupts::are_enabled();
+        x64::interrupts::disable();
+        let mut cpu = cpu::Cpu::current().info().lock();
+        if cpu.ncli == 0 {
+            cpu.zcli = cli;
+        }
+        cpu.ncli += 1;
+        Self
+    }
+
+    pub fn drop_and_hlt(self) {
+        mem::forget(self);
+        assert!(
+            !x64::interrupts::are_enabled(),
+            "Inconsistent interrupt flag"
+        );
+        let mut cpu = cpu::Cpu::current().info().lock();
+        cpu.ncli -= 1;
+        let sti = cpu.ncli == 0 && !cpu.zcli;
+        drop(cpu);
+        assert!(sti, "Cannot hlt");
+        x64::interrupts::enable_and_hlt();
+    }
 }
 
-pub fn disable() {
-    x64::interrupts::disable();
-}
-
-pub fn enable_and_hlt() {
-    x64::interrupts::enable_and_hlt();
-}
-
-pub fn without_interrupts<T>(f: impl FnOnce() -> T) -> T {
-    x64::interrupts::without_interrupts(f)
+impl Drop for Cli {
+    fn drop(&mut self) {
+        assert!(
+            !x64::interrupts::are_enabled(),
+            "Inconsistent interrupt flag"
+        );
+        let mut cpu = cpu::Cpu::current().info().lock();
+        cpu.ncli -= 1;
+        let sti = cpu.ncli == 0 && !cpu.zcli;
+        drop(cpu);
+        if sti {
+            x64::interrupts::enable();
+        }
+    }
 }
 
 static mut IDT: x64::InterruptDescriptorTable = x64::InterruptDescriptorTable::new();
@@ -96,6 +129,11 @@ unsafe fn initialize_apic(rsdp: usize) {
     assert_eq!(lapic.apic_id(), bsp.local_apic_id);
     assert_eq!(ioapic.apic_id(), ioapic_id);
 
+    cpu::initialize(
+        apic.local_apic_address,
+        bsp.local_apic_id,
+        aps.iter().map(|ap| ap.local_apic_id),
+    );
     LAPIC.call_once(|| lapic);
 
     // TODO: Understand the detailed semantics of these setup processes
@@ -235,7 +273,7 @@ extern "x86-interrupt" fn kbd_handler(_stack_frame: x64::InterruptStackFrame) {
 }
 
 extern "x86-interrupt" fn com1_handler(_stack_frame: x64::InterruptStackFrame) {
-    let byte = without_interrupts(|| serial::default_port().receive());
+    let byte = serial::default_port().receive();
     let _ = message_queue().enqueue(Message::Com1(byte));
     unsafe { LAPIC.wait().set_eoi(0) };
 }

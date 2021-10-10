@@ -1,25 +1,26 @@
 use super::{font, Color, FrameBuffer, FrameBufferExt, ScreenBuffer, VecBuffer};
+use crate::mutex::{Mutex, MutexGuard};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec;
 use core::fmt;
 use log::trace;
-use spin::{Mutex, MutexGuard, Once};
+use spin::Once;
 
 static SCREEN_CONSOLE: Once<Mutex<Console<ScreenBuffer>>> = Once::new();
-
-pub fn screen_console() -> MutexGuard<'static, Console<ScreenBuffer>> {
-    SCREEN_CONSOLE.wait().lock()
-}
-
-pub fn screen_console_if_available() -> Option<MutexGuard<'static, Console<ScreenBuffer>>> {
-    SCREEN_CONSOLE.get()?.try_lock()
-}
 
 pub fn initialize_screen_console(sb: ScreenBuffer) {
     SCREEN_CONSOLE.call_once(move || {
         trace!("INITIALIZING screen console");
         Mutex::new(Console::new(sb, Color::WHITE, Color::BLACK))
     });
+}
+
+pub fn screen_console() -> MutexGuard<'static, Console<ScreenBuffer>> {
+    SCREEN_CONSOLE.wait().lock()
+}
+
+pub fn screen_console_if_initialized() -> Option<MutexGuard<'static, Console<ScreenBuffer>>> {
+    Some(SCREEN_CONSOLE.get()?.lock())
 }
 
 pub struct Console<T> {

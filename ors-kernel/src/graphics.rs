@@ -6,7 +6,7 @@ mod rect;
 
 pub use color::Color;
 pub use console::{
-    initialize_screen_console, screen_console, screen_console_if_available, Console,
+    initialize_screen_console, screen_console, screen_console_if_initialized, Console,
 };
 pub use frame_buffer::{FrameBuffer, FrameBufferFormat, ScreenBuffer, VecBuffer};
 pub use rect::Rect;
