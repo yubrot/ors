@@ -119,11 +119,11 @@ fn allocate_frame_for_block(index: usize) -> *mut u8 {
 #[cfg(test)]
 mod tests {
     use alloc::boxed::Box;
-    use log::trace;
+    use log::info;
 
     #[test_case]
     fn test_frame() {
-        trace!("TESTING allocator::test_frame");
+        info!("TESTING allocator::test_frame");
 
         let a = Box::new([0u8; 4096]);
         let b = Box::new([0u8; 4096]);
@@ -142,7 +142,7 @@ mod tests {
 
     #[test_case]
     fn test_block1() {
-        trace!("TESTING allocator::test_block1");
+        info!("TESTING allocator::test_block1");
 
         let a = Box::new([0u8; 8]);
         let b = Box::new([0u8; 8]);
@@ -159,7 +159,7 @@ mod tests {
 
     #[test_case]
     fn test_block2() {
-        trace!("TESTING allocator::test_block2");
+        info!("TESTING allocator::test_block2");
 
         let a = Box::new([0u8; 1024]);
         let b = Box::new([0u8; 1024]);

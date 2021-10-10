@@ -163,11 +163,11 @@ impl x64::FrameDeallocator<x64::Size4KiB> for BitmapFrameManager {
 #[cfg(test)]
 mod tests {
     use super::frame_manager;
-    use log::trace;
+    use log::info;
 
     #[test_case]
     fn test_frame_manager() {
-        trace!("TESTING phys_memory::test_frame_manager");
+        info!("TESTING phys_memory::test_frame_manager");
 
         let a = frame_manager().allocate(1).unwrap();
         let b = frame_manager().allocate(1).unwrap();

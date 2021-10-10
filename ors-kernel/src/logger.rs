@@ -6,9 +6,6 @@ use core::fmt::Write;
 
 pub fn register() {
     log::set_logger(&KernelLogger).unwrap();
-    #[cfg(test)]
-    log::set_max_level(log::LevelFilter::Trace);
-    #[cfg(not(test))]
     log::set_max_level(log::LevelFilter::Info);
 }
 

@@ -37,11 +37,11 @@ impl Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use log::trace;
+    use log::info;
 
     #[test_case]
     fn test_rect() {
-        trace!("TESTING graphics::rect");
+        info!("TESTING graphics::rect");
         assert!(Rect::new(0, 0, 100, 100).contains(50, 50));
         assert!(!Rect::new(0, 0, 100, 100).contains(-5, 10));
         assert_eq!(
