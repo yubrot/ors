@@ -10,6 +10,7 @@
 extern crate alloc;
 
 pub mod allocator;
+pub mod cpu;
 pub mod graphics;
 pub mod interrupts;
 pub mod logger;
