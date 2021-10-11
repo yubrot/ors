@@ -12,6 +12,7 @@ extern crate alloc;
 #[macro_use]
 pub mod serial;
 pub mod allocator;
+pub mod context;
 pub mod cpu;
 pub mod graphics;
 pub mod interrupts;

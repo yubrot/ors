@@ -6,6 +6,8 @@ use core::fmt;
 use log::trace;
 use spin::Once;
 
+// TODO: Separate writing to the console and drawing to the screen
+
 static SCREEN_CONSOLE: Once<Mutex<Console<ScreenBuffer>>> = Once::new();
 
 pub fn initialize_screen_console(sb: ScreenBuffer) {

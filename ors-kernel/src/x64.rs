@@ -3,7 +3,7 @@
 pub use x86_64::instructions::hlt;
 pub use x86_64::instructions::interrupts;
 pub use x86_64::instructions::port::{Port, PortWriteOnly};
-pub use x86_64::instructions::segmentation::{Segment, CS, SS};
+pub use x86_64::instructions::segmentation::{Segment, CS, DS, ES, FS, GS, SS};
 pub use x86_64::instructions::tables::load_tss;
 pub use x86_64::registers::control::{Cr2, Cr3, Cr3Flags};
 pub use x86_64::structures::gdt::{Descriptor, GlobalDescriptorTable, SegmentSelector};
@@ -17,7 +17,7 @@ pub use x86_64::structures::paging::{
 };
 pub use x86_64::structures::tss::TaskStateSegment;
 pub use x86_64::structures::DescriptorTablePointer;
-pub use x86_64::{PhysAddr, VirtAddr};
+pub use x86_64::{PhysAddr, PrivilegeLevel, VirtAddr};
 
 use core::ptr;
 
