@@ -1,6 +1,7 @@
 //! This module works on the assumption that the processor information is initialized by
 //! calling `initialize` before any processor other than BSP is enabled.
 
+use crate::task::Task;
 use crate::x64;
 use ors_common::non_contiguous::Array;
 use spin::{Mutex, Once};
@@ -77,10 +78,11 @@ impl Cpu {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct CpuInfo {
     pub ncli: u32,  // Depth of pushcli (processing with interrupts disabled) nesting
     pub zcli: bool, // Were interrupts disabled before pushcli?
+    pub running_task: Option<Task>,
 }
 
 impl CpuInfo {
@@ -88,6 +90,7 @@ impl CpuInfo {
         Self {
             ncli: 0,
             zcli: false, // interrupts are enabled by default
+            running_task: None,
         }
     }
 }

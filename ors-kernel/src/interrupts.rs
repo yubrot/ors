@@ -2,27 +2,34 @@ use crate::cpu;
 use crate::paging::KernelAcpiHandler;
 use crate::segmentation::DOUBLE_FAULT_IST_INDEX;
 use crate::serial;
+use crate::task;
 use crate::x64;
 use acpi::platform::address::AddressSpace;
 use acpi::AcpiTables;
-use core::mem;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use heapless::mpmc::Q64 as Queue;
 use log::trace;
 use spin::Once;
 
-pub const TIMER_FREQ: u32 = 100;
+pub static TICKS: AtomicUsize = AtomicUsize::new(0);
+
+pub const TIMER_FREQ: u32 = 250;
 
 #[derive(Debug)]
-pub enum Message {
+pub enum Event {
     Kbd(u8),
     Com1(u8),
     Timer,
 }
 
-static MESSAGE_QUEUE: Queue<Message> = Queue::new();
+static EVENT_QUEUE: Queue<Event> = Queue::new();
 
-pub fn message_queue() -> &'static Queue<Message> {
-    &MESSAGE_QUEUE
+pub fn event_queue() -> &'static Queue<Event> {
+    &EVENT_QUEUE
+}
+
+pub fn ticks() -> usize {
+    TICKS.load(Ordering::SeqCst)
 }
 
 pub unsafe fn initialize(rsdp: usize) {
@@ -46,20 +53,6 @@ impl Cli {
         cpu.ncli += 1;
         Self
     }
-
-    pub fn drop_and_hlt(self) {
-        mem::forget(self);
-        assert!(
-            !x64::interrupts::are_enabled(),
-            "Inconsistent interrupt flag"
-        );
-        let mut cpu = cpu::Cpu::current().info().lock();
-        cpu.ncli -= 1;
-        let sti = cpu.ncli == 0 && !cpu.zcli;
-        drop(cpu);
-        assert!(sti, "Cannot hlt");
-        x64::interrupts::enable_and_hlt();
-    }
 }
 
 impl Drop for Cli {
@@ -81,14 +74,25 @@ impl Drop for Cli {
 static mut IDT: x64::InterruptDescriptorTable = x64::InterruptDescriptorTable::new();
 
 unsafe fn initialize_idt() {
-    IDT.breakpoint.set_handler_fn(breakpoint_handler);
-    IDT.page_fault.set_handler_fn(page_fault_handler);
+    IDT.breakpoint
+        .set_handler_fn(breakpoint_handler)
+        .disable_interrupts(true);
+    IDT.page_fault
+        .set_handler_fn(page_fault_handler)
+        .disable_interrupts(true);
     IDT.double_fault
         .set_handler_fn(double_fault_handler)
-        .set_stack_index(DOUBLE_FAULT_IST_INDEX);
-    IDT[(EXTERNAL_IRQ_OFFSET + IRQ_TIMER) as usize].set_handler_fn(timer_handler);
-    IDT[(EXTERNAL_IRQ_OFFSET + IRQ_KBD) as usize].set_handler_fn(kbd_handler);
-    IDT[(EXTERNAL_IRQ_OFFSET + IRQ_COM1) as usize].set_handler_fn(com1_handler);
+        .set_stack_index(DOUBLE_FAULT_IST_INDEX)
+        .disable_interrupts(true);
+    IDT[(EXTERNAL_IRQ_OFFSET + IRQ_TIMER) as usize]
+        .set_handler_fn(timer_handler)
+        .disable_interrupts(true);
+    IDT[(EXTERNAL_IRQ_OFFSET + IRQ_KBD) as usize]
+        .set_handler_fn(kbd_handler)
+        .disable_interrupts(true);
+    IDT[(EXTERNAL_IRQ_OFFSET + IRQ_COM1) as usize]
+        .set_handler_fn(com1_handler)
+        .disable_interrupts(true);
     IDT.load();
 }
 
@@ -261,19 +265,21 @@ extern "x86-interrupt" fn double_fault_handler(
 }
 
 extern "x86-interrupt" fn timer_handler(_stack_frame: x64::InterruptStackFrame) {
-    let msg = Message::Timer;
-    let _ = message_queue().enqueue(msg);
+    let msg = Event::Timer;
+    let _ = event_queue().enqueue(msg);
+    TICKS.fetch_add(1, Ordering::SeqCst);
     unsafe { LAPIC.wait().set_eoi(0) };
+    unsafe { task::task_manager().switch(None) };
 }
 
 extern "x86-interrupt" fn kbd_handler(_stack_frame: x64::InterruptStackFrame) {
-    let msg = Message::Kbd(unsafe { x64::Port::new(0x60).read() });
-    let _ = message_queue().enqueue(msg);
+    let msg = Event::Kbd(unsafe { x64::Port::new(0x60).read() });
+    let _ = event_queue().enqueue(msg);
     unsafe { LAPIC.wait().set_eoi(0) };
 }
 
 extern "x86-interrupt" fn com1_handler(_stack_frame: x64::InterruptStackFrame) {
     let byte = serial::default_port().receive();
-    let _ = message_queue().enqueue(Message::Com1(byte));
+    let _ = event_queue().enqueue(Event::Com1(byte));
     unsafe { LAPIC.wait().set_eoi(0) };
 }

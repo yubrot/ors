@@ -4,6 +4,9 @@
 #![feature(abi_x86_interrupt)]
 #![feature(alloc_error_handler)]
 #![feature(const_mut_refs)]
+#![feature(drain_filter)]
+#![feature(maybe_uninit_uninit_array)]
+#![feature(maybe_uninit_array_assume_init)]
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
@@ -23,6 +26,7 @@ pub mod pci;
 pub mod phys_memory;
 pub mod qemu;
 pub mod segmentation;
+pub mod task;
 pub mod x64;
 
 use log::info;
@@ -33,6 +37,7 @@ use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
 #[no_mangle]
 pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u64) {
     x64::interrupts::enable(); // To ensure that interrupts are enabled by default
+
     let cli = interrupts::Cli::new();
     logger::register();
     unsafe { segmentation::initialize() };
@@ -41,26 +46,29 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     unsafe { interrupts::initialize(rsdp as usize) };
     pci::initialize_devices();
     serial::default_port().init();
-
     graphics::initialize_screen_console((*fb).into());
     drop(cli);
 
     #[cfg(test)]
     test_main();
 
-    info!("Hello, World!");
-
-    let mut kbd = Keyboard::new(layouts::Jis109Key, ScancodeSet1, HandleControl::Ignore);
-    let mut next_msg = None;
-    let mut tick = 0usize;
+    task::task_manager().add(task::Priority::MIN, task_process_events, 0);
+    task::task_manager().add(task::Priority::MIN, task_counter, 1);
+    task::task_manager().add(task::Priority::MIN, task_counter, 2);
 
     loop {
-        if let Some(msg) = next_msg
-            .take()
-            .or_else(|| interrupts::message_queue().dequeue())
-        {
+        x64::hlt()
+    }
+}
+
+extern "C" fn task_process_events(_: u64) -> ! {
+    let mut kbd = Keyboard::new(layouts::Jis109Key, ScancodeSet1, HandleControl::Ignore);
+    let mut draw = 0;
+
+    loop {
+        while let Some(msg) = interrupts::event_queue().dequeue() {
             match msg {
-                interrupts::Message::Kbd(key) => {
+                interrupts::Event::Kbd(key) => {
                     if let Ok(Some(e)) = kbd.add_byte(key) {
                         if let Some(key) = kbd.process_keyevent(e) {
                             match key {
@@ -70,26 +78,32 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
                         }
                     }
                 }
-                interrupts::Message::Com1(b) => {
+                interrupts::Event::Com1(b) => {
                     info!("COM1: {}", char::from(b))
                 }
-                interrupts::Message::Timer => {
-                    tick += 1;
-                    if tick % interrupts::TIMER_FREQ as usize == 0 {
-                        info!("COUNT: {}", tick / interrupts::TIMER_FREQ as usize);
+                interrupts::Event::Timer => {
+                    let next_draw = interrupts::ticks() * 10 / interrupts::TIMER_FREQ as usize;
+                    if draw < next_draw {
+                        draw = next_draw;
+                        graphics::screen_console().render();
                     }
-                    graphics::screen_console().render();
                 }
             }
-        } else {
-            let cli = interrupts::Cli::new();
-            if let Some(msg) = interrupts::message_queue().dequeue() {
-                next_msg = Some(msg);
-                drop(cli);
-            } else {
-                cli.drop_and_hlt();
-            }
         }
+        x64::hlt();
+    }
+}
+
+extern "C" fn task_counter(i: u64) -> ! {
+    let mut t = 0;
+    let mut n = 0;
+    loop {
+        if t + 100 < interrupts::ticks() {
+            t += 100;
+            n += 1;
+            info!("COUNTER[{}]: {}", i, n);
+        }
+        x64::hlt()
     }
 }
 

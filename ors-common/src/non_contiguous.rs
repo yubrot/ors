@@ -28,7 +28,7 @@ where
 impl<I: ArrayIndex, V, const N: usize> Array<I, V, N> {
     pub fn new() -> Self {
         // TODO: [const { None }; N] with inline const expressions
-        let mut buckets: [MaybeUninit<Option<(I, V)>>; N] = MaybeUninit::uninit_array();
+        let mut buckets = MaybeUninit::uninit_array();
         for bucket in &mut buckets[..] {
             bucket.write(None);
         }
