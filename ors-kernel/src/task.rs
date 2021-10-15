@@ -1,6 +1,6 @@
 use crate::context::{Context, EntryPoint};
 use crate::cpu::Cpu;
-use crate::mutex::Mutex;
+use crate::sync::mutex::Mutex;
 use crate::x64;
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;

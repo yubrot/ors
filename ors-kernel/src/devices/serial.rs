@@ -1,4 +1,4 @@
-use crate::mutex::{Mutex, MutexGuard};
+use crate::sync::mutex::{Mutex, MutexGuard};
 pub use uart_16550::SerialPort as Port;
 
 const DEFAULT_PORT_ADDRESS: u16 = 0x3f8;
@@ -19,6 +19,6 @@ pub fn raw_default_port() -> Port {
 macro_rules! sprintln {
     ($( $t:tt )*) => {{
         use core::fmt::Write;
-        writeln!(crate::serial::raw_default_port(), $( $t )*).unwrap();
+        writeln!(crate::devices::serial::raw_default_port(), $( $t )*).unwrap();
     }};
 }

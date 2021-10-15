@@ -1,7 +1,7 @@
 use crate::cpu;
+use crate::devices;
 use crate::paging::KernelAcpiHandler;
 use crate::segmentation::DOUBLE_FAULT_IST_INDEX;
-use crate::serial;
 use crate::task;
 use crate::x64;
 use acpi::platform::address::AddressSpace;
@@ -279,7 +279,7 @@ extern "x86-interrupt" fn kbd_handler(_stack_frame: x64::InterruptStackFrame) {
 }
 
 extern "x86-interrupt" fn com1_handler(_stack_frame: x64::InterruptStackFrame) {
-    let byte = serial::default_port().receive();
+    let byte = devices::serial::default_port().receive();
     let _ = event_queue().enqueue(Event::Com1(byte));
     unsafe { LAPIC.wait().set_eoi(0) };
 }

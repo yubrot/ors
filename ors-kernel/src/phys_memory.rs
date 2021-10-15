@@ -1,7 +1,7 @@
 // A frame represents a memory section on a physical address,
 // and does not manage the usage of linear (virtual) addresses.
 
-use crate::mutex::{Mutex, MutexGuard};
+use crate::sync::mutex::{Mutex, MutexGuard};
 use crate::x64;
 use core::mem;
 use log::trace;

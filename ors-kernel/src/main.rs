@@ -13,19 +13,17 @@
 extern crate alloc;
 
 #[macro_use]
-pub mod serial;
+pub mod devices;
 pub mod allocator;
 pub mod context;
 pub mod cpu;
 pub mod graphics;
 pub mod interrupts;
 pub mod logger;
-pub mod mutex;
 pub mod paging;
-pub mod pci;
 pub mod phys_memory;
-pub mod qemu;
 pub mod segmentation;
+pub mod sync;
 pub mod task;
 pub mod x64;
 
@@ -44,8 +42,8 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     unsafe { paging::initialize() };
     phys_memory::frame_manager().initialize(mm);
     unsafe { interrupts::initialize(rsdp as usize) };
-    pci::initialize_devices();
-    serial::default_port().init();
+    devices::pci::initialize_devices();
+    devices::serial::default_port().init();
     graphics::initialize_screen_console((*fb).into());
     drop(cli);
 
@@ -112,7 +110,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     sprintln!("{}", info);
 
     #[cfg(test)]
-    qemu::exit(qemu::ExitCode::Failure);
+    devices::qemu::exit(devices::qemu::ExitCode::Failure);
 
     loop {
         x64::hlt()
@@ -134,5 +132,5 @@ fn test_runner(tests: &[&dyn Fn()]) {
         test();
     }
 
-    qemu::exit(qemu::ExitCode::Success);
+    devices::qemu::exit(devices::qemu::ExitCode::Success);
 }

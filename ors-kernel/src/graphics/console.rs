@@ -1,5 +1,5 @@
 use super::{font, Color, FrameBuffer, FrameBufferExt, ScreenBuffer, VecBuffer};
-use crate::mutex::{Mutex, MutexGuard};
+use crate::sync::mutex::{Mutex, MutexGuard};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec;
 use core::fmt;

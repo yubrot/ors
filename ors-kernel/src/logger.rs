@@ -1,5 +1,5 @@
+use crate::devices;
 use crate::graphics;
-use crate::serial;
 use core::fmt::Write;
 
 pub fn register() {
@@ -18,7 +18,7 @@ impl log::Log for KernelLogger {
         if let Some(mut sc) = graphics::screen_console_if_initialized() {
             writeln!(sc, "{}: {}", record.level(), record.args()).unwrap();
         }
-        writeln!(serial::default_port(), "{}", record.args()).unwrap();
+        writeln!(devices::serial::default_port(), "{}", record.args()).unwrap();
     }
 
     fn flush(&self) {}
