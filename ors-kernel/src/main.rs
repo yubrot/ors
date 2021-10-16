@@ -40,6 +40,7 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     x64::interrupts::enable(); // To ensure that interrupts are enabled by default
 
     let cli = interrupts::Cli::new();
+
     logger::register();
     unsafe { segmentation::initialize() };
     unsafe { paging::initialize() };
@@ -53,7 +54,9 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
 
     #[cfg(not(test))]
     {
-        task::task_scheduler().add(task::Priority::MAX, task_process_events, 0);
+        task::task_scheduler().add(task::Priority::MAX, task_process_kbd, 0);
+        task::task_scheduler().add(task::Priority::MAX, task_process_com1, 0);
+        task::task_scheduler().add(task::Priority::MAX, task_render, 0);
         task::task_scheduler().add(task::Priority::L1, task_producer, 1);
         task::task_scheduler().add(task::Priority::L1, task_consumer, 2);
     }
@@ -68,52 +71,55 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     }
 }
 
-extern "C" fn task_process_events(_: u64) -> ! {
+extern "C" fn task_process_kbd(_: u64) -> ! {
     let mut kbd = Keyboard::new(layouts::Jis109Key, ScancodeSet1, HandleControl::Ignore);
-    let mut draw = 0;
 
     loop {
-        match interrupts::event_queue().dequeue() {
-            interrupts::Event::Kbd(key) => {
-                if let Ok(Some(e)) = kbd.add_byte(key) {
-                    if let Some(key) = kbd.process_keyevent(e) {
-                        match key {
-                            DecodedKey::RawKey(key) => info!("KBD: {:?}", key),
-                            DecodedKey::Unicode(ch) => info!("KBD: {}", ch),
-                        }
-                    }
-                }
-            }
-            interrupts::Event::Com1(b) => {
-                info!("COM1: {}", char::from(b))
-            }
-            interrupts::Event::Timer => {
-                let next_draw = interrupts::ticks() * 10 / interrupts::TIMER_FREQ as usize;
-                if draw < next_draw {
-                    draw = next_draw;
-                    graphics::screen_console().render();
+        let input = interrupts::kbd_queue().dequeue(None);
+        if let Ok(Some(e)) = kbd.add_byte(input) {
+            if let Some(key) = kbd.process_keyevent(e) {
+                match key {
+                    DecodedKey::RawKey(key) => info!("KBD: {:?}", key),
+                    DecodedKey::Unicode(ch) => info!("KBD: {}", ch),
                 }
             }
         }
     }
 }
 
-static EXAMPLE_QUEUE: sync::queue::Queue<(), 32> = sync::queue::Queue::new();
+extern "C" fn task_process_com1(_: u64) -> ! {
+    loop {
+        let input = interrupts::com1_queue().dequeue(None);
+        info!("COM1: {}", char::from(input));
+    }
+}
+
+extern "C" fn task_render(_: u64) -> ! {
+    loop {
+        graphics::screen_console().render();
+        task::task_scheduler().sleep(interrupts::TIMER_FREQ / 30);
+    }
+}
+
+static EXAMPLE_QUEUE: sync::queue::Queue<u32, 128> = sync::queue::Queue::new();
 
 extern "C" fn task_producer(_: u64) -> ! {
     loop {
-        for i in 0..50 {
-            for _ in 0..i {
-                EXAMPLE_QUEUE.enqueue(());
+        for i in 0..100 {
+            kprintln!();
+            for n in 0..i {
+                kprint!("+");
+                EXAMPLE_QUEUE.enqueue(n, None);
             }
-            x64::hlt();
+            task::task_scheduler().sleep(interrupts::TIMER_FREQ);
         }
     }
 }
 
 extern "C" fn task_consumer(_: u64) -> ! {
     loop {
-        EXAMPLE_QUEUE.dequeue();
+        let _ = EXAMPLE_QUEUE.dequeue(None);
+        kprint!("-");
     }
 }
 

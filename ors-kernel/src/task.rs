@@ -1,12 +1,13 @@
 use crate::context::{Context, EntryPoint};
 use crate::cpu::Cpu;
-use crate::interrupts::Cli;
+use crate::interrupts::{ticks, Cli};
 use crate::sync::mutex::Mutex;
 use alloc::boxed::Box;
-use alloc::collections::VecDeque;
+use alloc::collections::{BTreeMap, BinaryHeap, VecDeque};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::cell::UnsafeCell;
+use core::cmp::Reverse;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU64, Ordering};
 use spin::Lazy;
@@ -23,7 +24,7 @@ pub fn task_scheduler() -> &'static TaskScheduler {
 pub struct TaskScheduler {
     queue: Mutex<TaskQueue>,
     task_id_gen: AtomicU64,
-    chan_gen: AtomicU64,
+    wait_channel_gen: AtomicU64,
 }
 
 impl TaskScheduler {
@@ -31,7 +32,7 @@ impl TaskScheduler {
         Self {
             queue: Mutex::new(TaskQueue::new()),
             task_id_gen: AtomicU64::new(0),
-            chan_gen: AtomicU64::new(0),
+            wait_channel_gen: AtomicU64::new(0),
         }
     }
 
@@ -39,8 +40,8 @@ impl TaskScheduler {
         TaskId(self.task_id_gen.fetch_add(1, Ordering::SeqCst))
     }
 
-    pub fn issue_chan(&self) -> Chan {
-        Chan(self.chan_gen.fetch_add(1, Ordering::SeqCst))
+    pub fn issue_wait_channel(&self) -> WaitChannel {
+        WaitChannel(self.wait_channel_gen.fetch_add(1, Ordering::SeqCst))
     }
 
     pub fn add(
@@ -56,7 +57,7 @@ impl TaskScheduler {
         id
     }
 
-    pub unsafe fn switch<T>(&self, scheduling_op: impl FnOnce() -> (Switch, T)) -> T {
+    pub fn switch<T>(&self, scheduling_op: impl FnOnce() -> (Option<Switch>, T)) -> T {
         let cli = Cli::new();
 
         let cpu_state = Cpu::current().state();
@@ -75,9 +76,8 @@ impl TaskScheduler {
             // scheduling_op is called while self.queue is locked
             let (switch, ret) = scheduling_op();
             let task = match switch {
-                Switch::Yield => queue_lock.dequeue(cpu_task, None),
-                Switch::Sleep(chan) => queue_lock.dequeue(cpu_task, Some(chan)),
-                Switch::Cancel => cpu_task,
+                Some(switch) => queue_lock.dequeue(cpu_task, switch),
+                None => cpu_task,
             };
             (task, ret)
         };
@@ -85,37 +85,44 @@ impl TaskScheduler {
         assert!(cpu_state.lock().running_task.replace(cpu_task).is_none());
 
         if current_ctx != next_ctx {
-            Context::switch(next_ctx, current_ctx);
+            unsafe { Context::switch(next_ctx, current_ctx) };
         }
 
         drop(cli);
         ret
     }
 
-    pub unsafe fn r#yield(&self) {
-        self.switch(|| (Switch::Yield, ()));
+    pub fn r#yield(&self) {
+        self.switch(|| (Some(Switch::Yield), ()))
     }
 
-    pub unsafe fn sleep<T>(&self, chan: Chan) {
-        self.switch(|| (Switch::Sleep(chan), ()));
+    pub fn sleep(&self, ticks: usize) {
+        self.switch(|| (Some(Switch::Sleep(ticks)), ()))
     }
 
-    pub fn wakeup(&self, chan: Chan) {
-        self.queue.lock().wakeup(chan);
+    pub fn release(&self, chan: WaitChannel) {
+        self.queue.lock().release(chan);
+    }
+
+    pub fn elapse(&self) {
+        self.queue.lock().elapse();
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Switch {
+    Blocked(WaitChannel, Option<usize>),
+    Sleep(usize),
     Yield,
-    Sleep(Chan),
-    Cancel,
 }
 
 #[derive(Debug)]
 struct TaskQueue {
-    sleeping_tasks: Vec<(Chan, Task)>, // sleeping on chan
+    pending_id_gen: u64,
     runnable_tasks: [VecDeque<Task>; Priority::SIZE],
+    pending_tasks: BTreeMap<PendingId, Task>,
+    blocks: BTreeMap<WaitChannel, Vec<PendingId>>,
+    timeouts: BinaryHeap<Reverse<(usize, PendingId, Option<WaitChannel>)>>,
 }
 
 impl TaskQueue {
@@ -125,9 +132,18 @@ impl TaskQueue {
             tasks.write(VecDeque::new());
         }
         Self {
-            sleeping_tasks: Vec::new(),
+            pending_id_gen: 0,
             runnable_tasks: unsafe { MaybeUninit::array_assume_init(runnable_tasks) },
+            pending_tasks: BTreeMap::new(),
+            blocks: BTreeMap::new(),
+            timeouts: BinaryHeap::new(),
         }
+    }
+
+    fn issue_pending_id(&mut self) -> PendingId {
+        let id = PendingId(self.pending_id_gen);
+        self.pending_id_gen += 1;
+        id
     }
 
     fn enqueue(&mut self, task: Task) {
@@ -135,10 +151,10 @@ impl TaskQueue {
     }
 
     /// Dequeuing requires a task that is currently running.
-    fn dequeue(&mut self, current_task: Task, current_sleep: Option<Chan>) -> Task {
-        let minimum_level_index = match current_sleep {
-            Some(_) => 0,
-            None => current_task.priority().index(), // current_task is still runnable
+    fn dequeue(&mut self, current_task: Task, current_switch: Switch) -> Task {
+        let minimum_level_index = match current_switch {
+            Switch::Yield => current_task.priority().index(), // current_task is still runnable
+            _ => 0,
         };
 
         // next_task is runnable, has the highest priority, and is at the front of the queue
@@ -154,10 +170,23 @@ impl TaskQueue {
             // TaskScheduler::switch -> Context::switch -> switch_context (asm.s)
             unsafe { &*current_task.ctx().get() }.mark_as_not_saved();
 
-            if let Some(chan) = current_sleep {
-                self.sleeping_tasks.push((chan, current_task));
-            } else {
-                self.runnable_tasks[current_task.priority().index()].push_back(current_task);
+            match current_switch {
+                Switch::Blocked(chan, timeout) => {
+                    let id = self.issue_pending_id();
+                    self.pending_tasks.insert(id, current_task);
+                    self.blocks.entry(chan).or_default().push(id);
+                    if let Some(t) = timeout {
+                        self.timeouts.push(Reverse((ticks() + t, id, Some(chan))));
+                    }
+                }
+                Switch::Sleep(t) => {
+                    let id = self.issue_pending_id();
+                    self.pending_tasks.insert(id, current_task);
+                    self.timeouts.push(Reverse((ticks() + t, id, None)));
+                }
+                Switch::Yield => {
+                    self.runnable_tasks[current_task.priority().index()].push_back(current_task);
+                }
             }
 
             unsafe { &*next_task.ctx().get() }.wait_saved();
@@ -167,16 +196,43 @@ impl TaskQueue {
         }
     }
 
-    fn wakeup(&mut self, chan: Chan) {
-        for (_, task) in self.sleeping_tasks.drain_filter(|(c, _)| chan == *c) {
-            self.runnable_tasks[task.priority().index()].push_back(task);
+    fn release(&mut self, chan: WaitChannel) {
+        if let Some(ids) = self.blocks.remove(&chan) {
+            for id in ids {
+                if let Some(task) = self.pending_tasks.remove(&id) {
+                    self.runnable_tasks[task.priority().index()].push_back(task);
+                }
+            }
         }
+    }
+
+    fn elapse(&mut self) {
+        let ticks = ticks();
+        while match self.timeouts.peek() {
+            Some(Reverse((t, id, chan))) if *t <= ticks => {
+                if let Some(task) = self.pending_tasks.remove(id) {
+                    self.runnable_tasks[task.priority().index()].push_back(task);
+                }
+                if let Some(chan) = chan {
+                    if let Some(ids) = self.blocks.get_mut(chan) {
+                        ids.retain(|i| i != id);
+                    }
+                }
+                let _ = self.timeouts.pop();
+                true
+            }
+            _ => false,
+        } {}
     }
 }
 
 #[repr(transparent)]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]
-pub struct Chan(u64);
+struct PendingId(u64);
+
+#[repr(transparent)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]
+pub struct WaitChannel(u64);
 
 #[repr(transparent)]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]

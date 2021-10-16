@@ -8,24 +8,22 @@ use crate::x64;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::Lazy;
 
-static TICKS: AtomicUsize = AtomicUsize::new(0);
-static EVENT_QUEUE: Queue<Event, 64> = Queue::new();
+pub const TIMER_FREQ: usize = 250;
 
-pub const TIMER_FREQ: u32 = 250;
+static TICKS: AtomicUsize = AtomicUsize::new(0);
+static KBD_QUEUE: Queue<u8, 64> = Queue::new();
+static COM1_QUEUE: Queue<u8, 64> = Queue::new();
 
 pub fn ticks() -> usize {
     TICKS.load(Ordering::SeqCst)
 }
 
-pub fn event_queue() -> &'static Queue<Event, 64> {
-    &EVENT_QUEUE
+pub fn kbd_queue() -> &'static Queue<u8, 64> {
+    &KBD_QUEUE
 }
 
-#[derive(Debug)]
-pub enum Event {
-    Kbd(u8),
-    Com1(u8),
-    Timer,
+pub fn com1_queue() -> &'static Queue<u8, 64> {
+    &COM1_QUEUE
 }
 
 /// Clear Interrupt Flag. Interrupts are disabled while this value is alive.
@@ -134,7 +132,7 @@ unsafe fn initialize_local_apic() {
     // Enable timer interrupts
     LAPIC.set_tdcr(X1);
     LAPIC.set_timer(PERIODIC | (EXTERNAL_IRQ_OFFSET + IRQ_TIMER));
-    LAPIC.set_ticr(measured_lapic_timer_freq / TIMER_FREQ);
+    LAPIC.set_ticr(measured_lapic_timer_freq / TIMER_FREQ as u32);
 
     // Disable  logical interrupt lines
     LAPIC.set_lint0(MASKED);
@@ -219,19 +217,19 @@ extern "x86-interrupt" fn double_fault_handler(
 
 extern "x86-interrupt" fn timer_handler(_stack_frame: x64::InterruptStackFrame) {
     TICKS.fetch_add(1, Ordering::SeqCst);
-    let _ = event_queue().try_enqueue(Event::Timer);
+    task::task_scheduler().elapse();
     unsafe { LAPIC.set_eoi(0) };
-    unsafe { task::task_scheduler().r#yield() };
+    task::task_scheduler().r#yield();
 }
 
 extern "x86-interrupt" fn kbd_handler(_stack_frame: x64::InterruptStackFrame) {
     let v = unsafe { x64::Port::new(0x60).read() };
-    let _ = event_queue().try_enqueue(Event::Kbd(v));
+    let _ = kbd_queue().try_enqueue(v);
     unsafe { LAPIC.set_eoi(0) };
 }
 
 extern "x86-interrupt" fn com1_handler(_stack_frame: x64::InterruptStackFrame) {
     let v = devices::serial::default_port().receive();
-    let _ = event_queue().try_enqueue(Event::Com1(v));
+    let _ = com1_queue().try_enqueue(v);
     unsafe { LAPIC.set_eoi(0) };
 }
