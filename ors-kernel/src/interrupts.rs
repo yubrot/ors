@@ -2,34 +2,33 @@ use crate::cpu;
 use crate::devices;
 use crate::paging::KernelAcpiHandler;
 use crate::segmentation::DOUBLE_FAULT_IST_INDEX;
+use crate::sync::queue::Queue;
 use crate::task;
 use crate::x64;
 use acpi::platform::address::AddressSpace;
 use acpi::AcpiTables;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use heapless::mpmc::Q64 as Queue;
 use log::trace;
 use spin::Once;
 
-pub static TICKS: AtomicUsize = AtomicUsize::new(0);
+static TICKS: AtomicUsize = AtomicUsize::new(0);
+static EVENT_QUEUE: Queue<Event, 64> = Queue::new();
 
 pub const TIMER_FREQ: u32 = 250;
+
+pub fn ticks() -> usize {
+    TICKS.load(Ordering::SeqCst)
+}
+
+pub fn event_queue() -> &'static Queue<Event, 64> {
+    &EVENT_QUEUE
+}
 
 #[derive(Debug)]
 pub enum Event {
     Kbd(u8),
     Com1(u8),
     Timer,
-}
-
-static EVENT_QUEUE: Queue<Event> = Queue::new();
-
-pub fn event_queue() -> &'static Queue<Event> {
-    &EVENT_QUEUE
-}
-
-pub fn ticks() -> usize {
-    TICKS.load(Ordering::SeqCst)
 }
 
 pub unsafe fn initialize(rsdp: usize) {
@@ -46,11 +45,11 @@ impl Cli {
     pub fn new() -> Self {
         let cli = !x64::interrupts::are_enabled();
         x64::interrupts::disable();
-        let mut cpu = cpu::Cpu::current().info().lock();
-        if cpu.ncli == 0 {
-            cpu.zcli = cli;
+        let mut cpu = cpu::Cpu::current().state().lock();
+        if cpu.thread_state.ncli == 0 {
+            cpu.thread_state.zcli = cli;
         }
-        cpu.ncli += 1;
+        cpu.thread_state.ncli += 1;
         Self
     }
 }
@@ -61,9 +60,9 @@ impl Drop for Cli {
             !x64::interrupts::are_enabled(),
             "Inconsistent interrupt flag"
         );
-        let mut cpu = cpu::Cpu::current().info().lock();
-        cpu.ncli -= 1;
-        let sti = cpu.ncli == 0 && !cpu.zcli;
+        let mut cpu = cpu::Cpu::current().state().lock();
+        cpu.thread_state.ncli -= 1;
+        let sti = cpu.thread_state.ncli == 0 && !cpu.thread_state.zcli;
         drop(cpu);
         if sti {
             x64::interrupts::enable();
@@ -265,21 +264,20 @@ extern "x86-interrupt" fn double_fault_handler(
 }
 
 extern "x86-interrupt" fn timer_handler(_stack_frame: x64::InterruptStackFrame) {
-    let msg = Event::Timer;
-    let _ = event_queue().enqueue(msg);
     TICKS.fetch_add(1, Ordering::SeqCst);
+    let _ = event_queue().try_enqueue(Event::Timer);
     unsafe { LAPIC.wait().set_eoi(0) };
-    unsafe { task::task_manager().switch(None) };
+    unsafe { task::task_scheduler().r#yield() };
 }
 
 extern "x86-interrupt" fn kbd_handler(_stack_frame: x64::InterruptStackFrame) {
-    let msg = Event::Kbd(unsafe { x64::Port::new(0x60).read() });
-    let _ = event_queue().enqueue(msg);
+    let v = unsafe { x64::Port::new(0x60).read() };
+    let _ = event_queue().try_enqueue(Event::Kbd(v));
     unsafe { LAPIC.wait().set_eoi(0) };
 }
 
 extern "x86-interrupt" fn com1_handler(_stack_frame: x64::InterruptStackFrame) {
-    let byte = devices::serial::default_port().receive();
-    let _ = event_queue().enqueue(Event::Com1(byte));
+    let v = devices::serial::default_port().receive();
+    let _ = event_queue().try_enqueue(Event::Com1(v));
     unsafe { LAPIC.wait().set_eoi(0) };
 }

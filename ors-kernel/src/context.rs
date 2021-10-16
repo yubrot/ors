@@ -1,3 +1,4 @@
+use crate::cpu::{Cpu, CpuThreadState};
 use crate::segmentation;
 use core::mem;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -30,8 +31,8 @@ pub struct Context {
     pub r14: u64,               // 0xb0
     pub r15: u64,               // 0xb8
     pub fxsave_area: [u8; 512], // 0xc0
-    /// Used to confirm the end of the context saving process
-    pub saved: AtomicBool, // 0x2c0
+    pub saved: AtomicBool,      // 0x2c0, used to confirm the end of the context saving process
+    pub cts: CpuThreadState,
 }
 
 impl Context {
@@ -81,6 +82,7 @@ impl Context {
             r15: 0,
             fxsave_area: [0; 512],
             saved: AtomicBool::new(false),
+            cts: CpuThreadState::new(),
         }
     }
 
@@ -98,6 +100,10 @@ impl Context {
 
     /// Perform context switching. The current context will be saved to `current_ctx`.
     pub unsafe fn switch(next_ctx: *const Self, current_ctx: *mut Self) {
+        let mut cpu = Cpu::current().state().lock();
+        (*current_ctx).cts = cpu.thread_state;
+        cpu.thread_state = (*next_ctx).cts;
+        drop(cpu);
         switch_context(next_ctx, current_ctx);
     }
 }

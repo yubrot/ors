@@ -16,9 +16,18 @@ pub fn raw_default_port() -> Port {
 }
 
 /// Write to raw_default_port. Used for debugging output.
+#[allow(unused_macros)]
 macro_rules! sprintln {
     ($( $t:tt )*) => {{
         use core::fmt::Write;
         writeln!(crate::devices::serial::raw_default_port(), $( $t )*).unwrap();
+    }};
+}
+
+#[allow(unused_macros)]
+macro_rules! sprint {
+    ($( $t:tt )*) => {{
+        use core::fmt::Write;
+        write!(crate::devices::serial::raw_default_port(), $( $t )*).unwrap();
     }};
 }

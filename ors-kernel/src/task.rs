@@ -1,7 +1,7 @@
 use crate::context::{Context, EntryPoint};
 use crate::cpu::Cpu;
+use crate::interrupts::Cli;
 use crate::sync::mutex::Mutex;
-use crate::x64;
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec;
@@ -13,28 +13,34 @@ use spin::Lazy;
 
 const DEFAULT_STACK_SIZE: usize = 4096 * 256; // 1MiB
 
-static TASK_MANAGER: Lazy<TaskManager> = Lazy::new(|| TaskManager::new());
+static TASK_SCHEDULER: Lazy<TaskScheduler> = Lazy::new(|| TaskScheduler::new());
 
-pub fn task_manager() -> &'static TaskManager {
-    &*TASK_MANAGER
+pub fn task_scheduler() -> &'static TaskScheduler {
+    &*TASK_SCHEDULER
 }
 
 #[derive(Debug)]
-pub struct TaskManager {
+pub struct TaskScheduler {
     queue: Mutex<TaskQueue>,
     task_id_gen: AtomicU64,
+    chan_gen: AtomicU64,
 }
 
-impl TaskManager {
+impl TaskScheduler {
     pub fn new() -> Self {
         Self {
             queue: Mutex::new(TaskQueue::new()),
             task_id_gen: AtomicU64::new(0),
+            chan_gen: AtomicU64::new(0),
         }
     }
 
     fn issue_task_id(&self) -> TaskId {
         TaskId(self.task_id_gen.fetch_add(1, Ordering::SeqCst))
+    }
+
+    pub fn issue_chan(&self) -> Chan {
+        Chan(self.chan_gen.fetch_add(1, Ordering::SeqCst))
     }
 
     pub fn add(
@@ -50,27 +56,48 @@ impl TaskManager {
         id
     }
 
-    pub unsafe fn switch(&self, sleep: Option<Chan>) {
-        assert!(
-            !x64::interrupts::are_enabled(),
-            "TaskManager::switch must be called with interrupts disabled"
-        );
-        let cpu_info = Cpu::current().info();
+    pub unsafe fn switch<T>(&self, scheduling_op: impl FnOnce() -> (Switch, T)) -> T {
+        let cli = Cli::new();
 
-        let cpu_task = cpu_info.lock().running_task.take();
-        let cpu_task =
-            cpu_task.unwrap_or_else(|| Task::new_current(self.issue_task_id(), Priority::MIN));
-        // FIXME: This implicitly relies on the fact that cpu_task is retained by a TaskQueue
+        let cpu_state = Cpu::current().state();
+        assert_eq!(cpu_state.lock().thread_state.ncli, 1); // To ensure that this context does not hold locks (*1)
+
+        let cpu_task = {
+            // This assignment is necessary to avoid deadlocks
+            let task = cpu_state.lock().running_task.take();
+            task.unwrap_or_else(|| Task::new_current(self.issue_task_id(), Priority::MIN))
+        };
+        // FIXME: This implicitly relies on the fact that cpu_task is retained (not dropped) by self.queue
         let current_ctx = cpu_task.ctx().get();
 
-        let cpu_task = self.queue.lock().dequeue(cpu_task, sleep);
+        let (cpu_task, ret) = {
+            let mut queue_lock = self.queue.lock();
+            // scheduling_op is called while self.queue is locked
+            let (switch, ret) = scheduling_op();
+            let task = match switch {
+                Switch::Yield => queue_lock.dequeue(cpu_task, None),
+                Switch::Sleep(chan) => queue_lock.dequeue(cpu_task, Some(chan)),
+                Switch::Cancel => cpu_task,
+            };
+            (task, ret)
+        };
         let next_ctx = cpu_task.ctx().get();
-        assert!(cpu_info.lock().running_task.replace(cpu_task).is_none());
+        assert!(cpu_state.lock().running_task.replace(cpu_task).is_none());
 
-        assert_eq!(cpu_info.lock().ncli, 0); // We don't need to save and restore cpu_info.zcli
         if current_ctx != next_ctx {
             Context::switch(next_ctx, current_ctx);
         }
+
+        drop(cli);
+        ret
+    }
+
+    pub unsafe fn r#yield(&self) {
+        self.switch(|| (Switch::Yield, ()));
+    }
+
+    pub unsafe fn sleep<T>(&self, chan: Chan) {
+        self.switch(|| (Switch::Sleep(chan), ()));
     }
 
     pub fn wakeup(&self, chan: Chan) {
@@ -79,8 +106,15 @@ impl TaskManager {
 }
 
 #[derive(Debug)]
+pub enum Switch {
+    Yield,
+    Sleep(Chan),
+    Cancel,
+}
+
+#[derive(Debug)]
 struct TaskQueue {
-    sleeping_tasks: Vec<(Chan, Task)>, // sleeping on chan (TODO)
+    sleeping_tasks: Vec<(Chan, Task)>, // sleeping on chan
     runnable_tasks: [VecDeque<Task>; Priority::SIZE],
 }
 
@@ -117,7 +151,7 @@ impl TaskQueue {
             .find_map(|(_, queue)| queue.pop_front())
         {
             // current_task.ctx will be saved "after" dequeuing:
-            // TaskManager::switch -> Context::switch -> switch_context (asm.s)
+            // TaskScheduler::switch -> Context::switch -> switch_context (asm.s)
             unsafe { &*current_task.ctx().get() }.mark_as_not_saved();
 
             if let Some(chan) = current_sleep {
@@ -140,7 +174,9 @@ impl TaskQueue {
     }
 }
 
-pub type Chan = (); // TODO
+#[repr(transparent)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]
+pub struct Chan(u64);
 
 #[repr(transparent)]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]
