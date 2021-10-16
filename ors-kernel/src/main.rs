@@ -14,11 +14,12 @@
 extern crate alloc;
 
 #[macro_use]
-pub mod devices;
+pub mod print;
 pub mod acpi;
 pub mod allocator;
 pub mod context;
 pub mod cpu;
+pub mod devices;
 pub mod graphics;
 pub mod interrupts;
 pub mod logger;
