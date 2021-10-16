@@ -1,6 +1,7 @@
 //! This module works on the assumption that the processor information is initialized by
 //! calling `initialize` before any processor other than BSP is enabled.
 
+use crate::acpi;
 use crate::task::Task;
 use crate::x64;
 use ors_common::non_contiguous::Array;
@@ -16,19 +17,16 @@ struct SystemInfo {
     application_cpu_state: Array<u32, Mutex<CpuState>, 64>,
 }
 
-pub fn initialize(
-    lapic_address: u64,
-    bsp_lapic_id: u32,
-    ap_lapic_ids: impl IntoIterator<Item = u32>,
-) {
+pub fn initialize() {
     SYSTEM_INFO.call_once(move || {
+        let processor_info = acpi::processor_info();
         let mut application_cpu_state = Array::new();
-        for ap_lapic_id in ap_lapic_ids {
-            application_cpu_state.insert(ap_lapic_id, Mutex::new(CpuState::new()));
+        for ap in processor_info.application_processors.iter() {
+            application_cpu_state.insert(ap.local_apic_id, Mutex::new(CpuState::new()));
         }
         SystemInfo {
-            lapic: x64::LApic::new(lapic_address),
-            boot_strap_lapic_id: bsp_lapic_id,
+            lapic: x64::LApic::new(acpi::apic_info().local_apic_address),
+            boot_strap_lapic_id: processor_info.boot_processor.local_apic_id,
             application_cpu_state,
         }
     });

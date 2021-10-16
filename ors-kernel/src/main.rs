@@ -15,6 +15,7 @@ extern crate alloc;
 
 #[macro_use]
 pub mod devices;
+pub mod acpi;
 pub mod allocator;
 pub mod context;
 pub mod cpu;
@@ -41,8 +42,10 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     logger::register();
     unsafe { segmentation::initialize() };
     unsafe { paging::initialize() };
-    phys_memory::frame_manager().initialize(mm);
-    unsafe { interrupts::initialize(rsdp as usize) };
+    unsafe { phys_memory::frame_manager().initialize(mm) };
+    unsafe { acpi::initialize(paging::KernelAcpiHandler, rsdp as usize) };
+    cpu::initialize();
+    unsafe { interrupts::initialize() };
     devices::pci::initialize_devices();
     devices::serial::default_port().init();
     graphics::initialize_screen_console((*fb).into());

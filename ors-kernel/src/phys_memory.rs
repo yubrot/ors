@@ -125,7 +125,8 @@ impl BitmapFrameManager {
         }
     }
 
-    pub fn initialize(&mut self, mm: &ors_common::memory_map::MemoryMap) {
+    /// Caller must ensure that the given MemoryMap is valid.
+    pub unsafe fn initialize(&mut self, mm: &ors_common::memory_map::MemoryMap) {
         trace!("INITIALIZING PhysMemoryManager");
         let mut phys_available_end = 0;
         for d in mm.descriptors() {
@@ -133,15 +134,16 @@ impl BitmapFrameManager {
             let phys_end = d.phys_end as usize;
             if phys_available_end < d.phys_start as usize {
                 self.mark_allocated_in_bytes(
-                    unsafe { Frame::from_phys_addr(x64::PhysAddr::new(phys_available_end as u64)) },
+                    Frame::from_phys_addr(x64::PhysAddr::new(phys_available_end as u64)),
                     phys_start - phys_available_end,
                 );
             }
             phys_available_end = phys_end;
         }
-        self.set_memory_range(Frame::MIN, unsafe {
-            Frame::from_phys_addr(x64::PhysAddr::new(phys_available_end as u64))
-        });
+        self.set_memory_range(
+            Frame::MIN,
+            Frame::from_phys_addr(x64::PhysAddr::new(phys_available_end as u64)),
+        );
     }
 }
 
