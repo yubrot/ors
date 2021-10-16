@@ -14,10 +14,10 @@ use spin::Lazy;
 
 const DEFAULT_STACK_SIZE: usize = 4096 * 256; // 1MiB
 
-static TASK_SCHEDULER: Lazy<TaskScheduler> = Lazy::new(|| TaskScheduler::new());
+static SCHEDULER: Lazy<TaskScheduler> = Lazy::new(|| TaskScheduler::new());
 
-pub fn task_scheduler() -> &'static TaskScheduler {
-    &*TASK_SCHEDULER
+pub fn scheduler() -> &'static TaskScheduler {
+    &*SCHEDULER
 }
 
 #[derive(Debug)]

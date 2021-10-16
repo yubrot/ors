@@ -4,7 +4,6 @@
 #![feature(abi_x86_interrupt)]
 #![feature(alloc_error_handler)]
 #![feature(const_mut_refs)]
-#![feature(drain_filter)]
 #![feature(maybe_uninit_uninit_array)]
 #![feature(maybe_uninit_array_assume_init)]
 #![feature(const_fn_fn_ptr_basics)]
@@ -54,11 +53,11 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
 
     #[cfg(not(test))]
     {
-        task::task_scheduler().add(task::Priority::MAX, task_process_kbd, 0);
-        task::task_scheduler().add(task::Priority::MAX, task_process_com1, 0);
-        task::task_scheduler().add(task::Priority::MAX, task_render, 0);
-        task::task_scheduler().add(task::Priority::L1, task_producer, 1);
-        task::task_scheduler().add(task::Priority::L1, task_consumer, 2);
+        task::scheduler().add(task::Priority::MAX, task_process_kbd, 0);
+        task::scheduler().add(task::Priority::MAX, task_process_com1, 0);
+        task::scheduler().add(task::Priority::MAX, task_render, 0);
+        task::scheduler().add(task::Priority::L1, task_producer, 1);
+        task::scheduler().add(task::Priority::L1, task_consumer, 2);
     }
 
     drop(cli);
@@ -97,7 +96,7 @@ extern "C" fn task_process_com1(_: u64) -> ! {
 extern "C" fn task_render(_: u64) -> ! {
     loop {
         graphics::screen_console().render();
-        task::task_scheduler().sleep(interrupts::TIMER_FREQ / 30);
+        task::scheduler().sleep(interrupts::TIMER_FREQ / 30);
     }
 }
 
@@ -111,7 +110,7 @@ extern "C" fn task_producer(_: u64) -> ! {
                 kprint!("+");
                 EXAMPLE_QUEUE.enqueue(n, None);
             }
-            task::task_scheduler().sleep(interrupts::TIMER_FREQ);
+            task::scheduler().sleep(interrupts::TIMER_FREQ);
         }
     }
 }

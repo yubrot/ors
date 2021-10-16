@@ -217,9 +217,9 @@ extern "x86-interrupt" fn double_fault_handler(
 
 extern "x86-interrupt" fn timer_handler(_stack_frame: x64::InterruptStackFrame) {
     TICKS.fetch_add(1, Ordering::SeqCst);
-    task::task_scheduler().elapse();
+    task::scheduler().elapse();
     unsafe { LAPIC.set_eoi(0) };
-    task::task_scheduler().r#yield();
+    task::scheduler().r#yield();
 }
 
 extern "x86-interrupt" fn kbd_handler(_stack_frame: x64::InterruptStackFrame) {
