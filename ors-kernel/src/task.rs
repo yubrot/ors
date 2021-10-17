@@ -10,14 +10,24 @@ use core::cell::UnsafeCell;
 use core::cmp::Reverse;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU64, Ordering};
-use spin::Lazy;
+use log::trace;
+use spin::Once;
 
 const DEFAULT_STACK_SIZE: usize = 4096 * 256; // 1MiB
 
-static SCHEDULER: Lazy<TaskScheduler> = Lazy::new(|| TaskScheduler::new());
+static SCHEDULER: Once<TaskScheduler> = Once::new();
+
+pub fn initialize_scheduler() {
+    SCHEDULER.call_once(|| {
+        trace!("INITIALIZING Task Scheduler");
+        TaskScheduler::new()
+    });
+}
 
 pub fn scheduler() -> &'static TaskScheduler {
-    &*SCHEDULER
+    SCHEDULER
+        .get()
+        .expect("task::scheduler is called before task::initialize_scheduler")
 }
 
 #[derive(Debug)]

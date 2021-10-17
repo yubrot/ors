@@ -50,6 +50,7 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     devices::pci::initialize_devices();
     devices::serial::default_port().init();
     graphics::initialize_screen_console((*fb).into());
+    task::initialize_scheduler();
 
     #[cfg(not(test))]
     {

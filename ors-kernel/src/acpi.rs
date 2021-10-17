@@ -19,7 +19,9 @@ pub unsafe fn initialize(handler: impl AcpiHandler, rsdp: usize) {
 }
 
 fn platform_info() -> &'static PlatformInfo {
-    PLATFORM_INFO.wait()
+    PLATFORM_INFO
+        .get()
+        .expect("acpi::platform_info is called before acpi::initialize")
 }
 
 pub fn apic_info() -> &'static Apic {

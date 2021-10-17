@@ -1,6 +1,6 @@
+use crate::sync::lazy::Lazy;
 use crate::task;
 use heapless::mpmc::MpMcQueue;
-use spin::Lazy;
 
 /// `heapless::mpmc::MpMcQueue` with task scheduler integration.
 pub struct Queue<T, const N: usize> {

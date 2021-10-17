@@ -3,7 +3,7 @@ use core::fmt;
 use core::mem;
 use core::ops::{Deref, DerefMut};
 
-/// `spin::Mutex` with `crate::interrupts::Cli`.
+/// `spin::Mutex` with `crate::interrupts::Cli` to avoid deadlocks.
 #[derive(Debug)]
 pub struct Mutex<T> {
     inner: spin::Mutex<T>,

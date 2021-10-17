@@ -68,7 +68,8 @@ impl Cpu {
         match self {
             Self::BootStrap => &BOOT_STRAP_CPU_STATE,
             Self::Application(lapic_id) => SYSTEM_INFO
-                .wait() // works under the module assumption
+                .get()
+                .expect("Non-BSP CPU found before cpu::initialize")
                 .application_cpu_state
                 .get(lapic_id)
                 .expect("Unknown CPU"),

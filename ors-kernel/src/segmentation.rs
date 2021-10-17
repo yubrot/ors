@@ -11,11 +11,15 @@ static KERNEL_SS: Once<x64::SegmentSelector> = Once::new();
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
 
 pub fn cs() -> x64::SegmentSelector {
-    *KERNEL_CS.wait()
+    *KERNEL_CS
+        .get()
+        .expect("segmentation::cs is called before segmentation::initialize")
 }
 
 pub fn ss() -> x64::SegmentSelector {
-    *KERNEL_SS.wait()
+    *KERNEL_SS
+        .get()
+        .expect("segmentation::ss is called before segmentation::initialize")
 }
 
 pub unsafe fn initialize() {

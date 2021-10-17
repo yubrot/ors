@@ -18,7 +18,10 @@ pub fn initialize_screen_console(sb: ScreenBuffer) {
 }
 
 pub fn screen_console() -> MutexGuard<'static, Console<ScreenBuffer>> {
-    SCREEN_CONSOLE.wait().lock()
+    SCREEN_CONSOLE
+        .get()
+        .expect("console::screen_console is called before console::initialize_screen_console")
+        .lock()
 }
 
 pub fn screen_console_if_initialized() -> Option<MutexGuard<'static, Console<ScreenBuffer>>> {

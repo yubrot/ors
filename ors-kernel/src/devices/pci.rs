@@ -9,15 +9,17 @@ use spin::Once;
 
 static DEVICES: Once<Vec<Device, 32>> = Once::new();
 
-pub fn devices() -> &'static Vec<Device, 32> {
-    DEVICES.wait()
-}
-
 pub fn initialize_devices() {
     DEVICES.call_once(|| {
         trace!("INITIALIZING PCI devices");
         Device::scan::<32>().unwrap()
     });
+}
+
+pub fn devices() -> &'static Vec<Device, 32> {
+    DEVICES
+        .get()
+        .expect("pci::devices is called before pci::initialize_devices")
 }
 
 // https://wiki.osdev.org/PCI
