@@ -3,6 +3,7 @@ mod console;
 mod font;
 mod frame_buffer;
 mod rect;
+mod text_buffer;
 
 pub use color::Color;
 pub use console::{
@@ -10,6 +11,7 @@ pub use console::{
 };
 pub use frame_buffer::{FrameBuffer, FrameBufferFormat, ScreenBuffer, VecBuffer};
 pub use rect::Rect;
+pub use text_buffer::TextBuffer;
 
 pub trait FrameBufferExt: FrameBuffer {
     fn rect(&self) -> Rect {

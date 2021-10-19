@@ -1,7 +1,5 @@
-use super::{font, Color, FrameBuffer, FrameBufferExt, ScreenBuffer, VecBuffer};
+use super::{Color, FrameBuffer, ScreenBuffer, TextBuffer};
 use crate::sync::mutex::{Mutex, MutexGuard};
-use alloc::collections::{BTreeMap, VecDeque};
-use alloc::vec;
 use core::fmt;
 use log::trace;
 use spin::Once;
@@ -29,76 +27,26 @@ pub fn screen_console_if_initialized() -> Option<MutexGuard<'static, Console<Scr
 }
 
 pub struct Console<T> {
-    fb: T,
-    fg: Color,
-    bg: Color,
-    size: (usize, usize),
-    char_cache: BTreeMap<char, VecBuffer>,
-    rendered_lines: VecDeque<VecBuffer>,
-    cursor: (usize, usize),
+    buf: TextBuffer<T>,
 }
 
 impl<T: FrameBuffer> Console<T> {
     pub fn new(fb: T, fg: Color, bg: Color) -> Self {
-        let format = fb.format();
-        let size = (
-            fb.width() / font::WIDTH as usize,
-            fb.height() / font::HEIGHT as usize,
-        );
-        let line_size = (size.0 * font::WIDTH as usize, font::HEIGHT as usize);
         Self {
-            fb,
-            fg,
-            bg,
-            size,
-            char_cache: BTreeMap::new(),
-            rendered_lines: vec![VecBuffer::new(line_size.0, line_size.1, format); size.1].into(),
-            cursor: (0, 0),
+            buf: TextBuffer::new(fb, fg, bg, true),
         }
     }
 
     pub fn clear(&mut self) {
-        for rendered_line in self.rendered_lines.iter_mut() {
-            rendered_line.clear(self.bg);
-        }
-        self.cursor = (0, 0);
+        self.buf.clear();
     }
 
     pub fn render(&mut self) {
-        let ox = (self.fb.width() as i32 - self.size.0 as i32 * font::WIDTH as i32) / 2;
-        let oy = (self.fb.height() as i32 - self.size.1 as i32 * font::HEIGHT as i32) / 2;
-        for (i, rendered_line) in self.rendered_lines.iter().enumerate() {
-            self.fb
-                .blit(ox, oy + i as i32 * font::HEIGHT as i32, rendered_line);
-        }
+        self.buf.render();
     }
 
     pub fn put(&mut self, c: char) {
-        // wrapping / line feed
-        if c == '\n' || self.cursor.0 >= self.size.0 {
-            self.cursor.0 = 0;
-            self.cursor.1 += 1;
-        }
-        // remove the first line
-        if self.cursor.1 >= self.size.1 {
-            self.cursor.1 = self.size.1 - 1;
-            let mut next_line = self.rendered_lines.pop_front().unwrap();
-            next_line.clear(self.bg);
-            self.rendered_lines.push_back(next_line);
-        }
-        if c != '\n' {
-            let fg = self.fg;
-            let bg = self.bg;
-            let format = self.fb.format();
-            let char_buf = self.char_cache.entry(c).or_insert_with_key(|c| {
-                let mut buf = VecBuffer::new(font::WIDTH as usize, font::HEIGHT as usize, format);
-                buf.write_char(0, 0, *c, fg, bg);
-                buf
-            });
-            let (x, y) = self.cursor;
-            self.rendered_lines[y].blit(x as i32 * font::WIDTH as i32, 0, char_buf);
-            self.cursor.0 += 1;
-        }
+        self.buf.put(c);
     }
 }
 
