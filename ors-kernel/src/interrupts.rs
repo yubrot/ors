@@ -1,8 +1,8 @@
 use crate::acpi;
+use crate::console;
 use crate::cpu::Cpu;
 use crate::devices;
 use crate::segmentation::DOUBLE_FAULT_IST_INDEX;
-use crate::sync::queue::Queue;
 use crate::task;
 use crate::x64;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -11,19 +11,9 @@ use spin::Lazy;
 pub const TIMER_FREQ: usize = 250;
 
 static TICKS: AtomicUsize = AtomicUsize::new(0);
-static KBD_QUEUE: Queue<u8, 64> = Queue::new();
-static COM1_QUEUE: Queue<u8, 64> = Queue::new();
 
 pub fn ticks() -> usize {
     TICKS.load(Ordering::SeqCst)
-}
-
-pub fn kbd_queue() -> &'static Queue<u8, 64> {
-    &KBD_QUEUE
-}
-
-pub fn com1_queue() -> &'static Queue<u8, 64> {
-    &COM1_QUEUE
 }
 
 /// Clear Interrupt Flag. Interrupts are disabled while this value is alive.
@@ -224,12 +214,12 @@ extern "x86-interrupt" fn timer_handler(_stack_frame: x64::InterruptStackFrame) 
 
 extern "x86-interrupt" fn kbd_handler(_stack_frame: x64::InterruptStackFrame) {
     let v = unsafe { x64::Port::new(0x60).read() };
-    let _ = kbd_queue().try_enqueue(v);
+    console::accept_raw_input(console::RawInput::Kbd(v));
     unsafe { LAPIC.set_eoi(0) };
 }
 
 extern "x86-interrupt" fn com1_handler(_stack_frame: x64::InterruptStackFrame) {
     let v = devices::serial::default_port().receive();
-    let _ = com1_queue().try_enqueue(v);
+    console::accept_raw_input(console::RawInput::Com1(v));
     unsafe { LAPIC.set_eoi(0) };
 }

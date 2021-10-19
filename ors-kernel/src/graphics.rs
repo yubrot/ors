@@ -1,14 +1,10 @@
 mod color;
-mod console;
 mod font;
 mod frame_buffer;
 mod rect;
 mod text_buffer;
 
 pub use color::Color;
-pub use console::{
-    initialize_screen_console, screen_console, screen_console_if_initialized, Console,
-};
 pub use frame_buffer::{FrameBuffer, FrameBufferFormat, ScreenBuffer, VecBuffer};
 pub use rect::Rect;
 pub use text_buffer::TextBuffer;

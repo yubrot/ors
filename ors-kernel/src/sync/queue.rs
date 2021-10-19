@@ -18,14 +18,14 @@ impl<T, const N: usize> Queue<T, N> {
         }
     }
 
-    pub fn enqueue(&self, mut item: T, timeout: Option<usize>) {
+    pub fn enqueue(&self, mut item: T) {
         loop {
             match self.inner.enqueue(item).or_else(|item| {
                 task::scheduler().switch(|| {
                     let ret = self.inner.enqueue(item);
                     let switch = match ret {
                         Ok(_) => None,
-                        Err(_) => Some(task::Switch::Blocked(*self.full_chan, timeout)),
+                        Err(_) => Some(task::Switch::Blocked(*self.full_chan, None)),
                     };
                     (switch, ret)
                 })
@@ -37,20 +37,38 @@ impl<T, const N: usize> Queue<T, N> {
         task::scheduler().release(*self.empty_chan);
     }
 
+    pub fn enqueue_timeout(&self, item: T, timeout: usize) -> Result<(), T> {
+        self.inner
+            .enqueue(item)
+            .or_else(|item| {
+                task::scheduler().switch(|| {
+                    let ret = self.inner.enqueue(item);
+                    let switch = match ret {
+                        Ok(_) => None,
+                        Err(_) => Some(task::Switch::Blocked(*self.full_chan, Some(timeout))),
+                    };
+                    (switch, ret)
+                })
+            })
+            .or_else(|item| self.inner.enqueue(item))?;
+        task::scheduler().release(*self.empty_chan);
+        Ok(())
+    }
+
     pub fn try_enqueue(&self, item: T) -> Result<(), T> {
         self.inner.enqueue(item)?;
         task::scheduler().release(*self.empty_chan);
         Ok(())
     }
 
-    pub fn dequeue(&self, timeout: Option<usize>) -> T {
+    pub fn dequeue(&self) -> T {
         let item = loop {
             match self.inner.dequeue().or_else(|| {
                 task::scheduler().switch(|| {
                     let ret = self.inner.dequeue();
                     let switch = match ret {
                         Some(_) => None,
-                        None => Some(task::Switch::Blocked(*self.empty_chan, timeout)),
+                        None => Some(task::Switch::Blocked(*self.empty_chan, None)),
                     };
                     (switch, ret)
                 })
@@ -61,6 +79,25 @@ impl<T, const N: usize> Queue<T, N> {
         };
         task::scheduler().release(*self.full_chan);
         item
+    }
+
+    pub fn dequeue_timeout(&self, timeout: usize) -> Option<T> {
+        let item = self
+            .inner
+            .dequeue()
+            .or_else(|| {
+                task::scheduler().switch(|| {
+                    let ret = self.inner.dequeue();
+                    let switch = match ret {
+                        Some(_) => None,
+                        None => Some(task::Switch::Blocked(*self.empty_chan, Some(timeout))),
+                    };
+                    (switch, ret)
+                })
+            })
+            .or_else(|| self.inner.dequeue())?;
+        task::scheduler().release(*self.full_chan);
+        Some(item)
     }
 
     pub fn try_dequeue(&self) -> Option<T> {

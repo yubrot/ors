@@ -1,5 +1,5 @@
+use crate::console;
 use crate::devices;
-use crate::graphics;
 use core::fmt;
 
 #[derive(Debug)]
@@ -8,9 +8,7 @@ pub struct KernelWrite;
 impl fmt::Write for KernelWrite {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         devices::serial::default_port().write_str(s)?;
-        if let Some(mut sc) = graphics::screen_console_if_initialized() {
-            sc.write_str(s)?;
-        }
+        console::ConsoleWrite.write_str(s)?;
         Ok(())
     }
 }
