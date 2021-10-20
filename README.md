@@ -45,3 +45,7 @@ ors is based on [MikanOS](https://github.com/uchan-nos/mikanos) and [blog_os (Se
 - [ ] Compare with [xv6](https://github.com/mit-pdos/xv6-public)
 - [ ] Try to implement TCP protocol stack
 - [ ] Compare with POSIX
+
+## Resources
+
+- ors uses [Tamzen font](https://github.com/sunaku/tamzen-font).

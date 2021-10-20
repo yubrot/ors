@@ -5,9 +5,10 @@ mod rect;
 mod text_buffer;
 
 pub use color::Color;
+pub use font::{FontStyle, MonospaceFont};
 pub use frame_buffer::{FrameBuffer, FrameBufferFormat, ScreenBuffer, VecBuffer};
 pub use rect::Rect;
-pub use text_buffer::TextBuffer;
+pub use text_buffer::MonospaceTextBuffer;
 
 pub trait FrameBufferExt: FrameBuffer {
     fn rect(&self) -> Rect {
@@ -95,16 +96,6 @@ pub trait FrameBufferExt: FrameBuffer {
 
     fn clear(&mut self, color: Color) {
         self.fill_rect(self.rect(), color);
-    }
-
-    fn write_char(&mut self, x: i32, y: i32, c: char, fg: Color, bg: Color) {
-        font::write_ascii(self, x, y, c, fg, bg);
-    }
-
-    fn write_string(&mut self, x: i32, y: i32, s: &str, fg: Color, bg: Color) {
-        for (i, c) in s.chars().enumerate() {
-            self.write_char(x + font::WIDTH as i32 * i as i32, y, c, fg, bg);
-        }
     }
 }
 

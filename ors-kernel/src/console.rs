@@ -1,4 +1,4 @@
-use crate::graphics::{Color, ScreenBuffer, TextBuffer};
+use crate::graphics::{FrameBuffer, MonospaceFont, MonospaceTextBuffer, ScreenBuffer};
 use crate::interrupts::{ticks, TIMER_FREQ};
 use crate::sync::queue::Queue;
 use crate::task;
@@ -8,7 +8,9 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use log::{info, trace};
 use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
 
-static OUT: Queue<heapless::String<64>, 128> = Queue::new();
+const OUT_CHUNK_SIZE: usize = 64;
+
+static OUT: Queue<heapless::String<OUT_CHUNK_SIZE>, 128> = Queue::new();
 static OUT_READY: AtomicBool = AtomicBool::new(false);
 static RAW_IN: Queue<RawInput, 128> = Queue::new();
 
@@ -19,7 +21,7 @@ impl fmt::Write for ConsoleWrite {
     fn write_str(&mut self, mut s: &str) -> fmt::Result {
         if OUT_READY.load(Ordering::Acquire) {
             while s.len() > 0 {
-                let mut i = s.len().min(128);
+                let mut i = s.len().min(OUT_CHUNK_SIZE);
                 while !s.is_char_boundary(i) {
                     i -= 1;
                 }
@@ -54,9 +56,16 @@ pub fn accept_raw_input(input: RawInput) {
 extern "C" fn handle_output(buf: u64) -> ! {
     const RENDER_FREQ: usize = 30;
     const RENDER_INTERVAL: usize = TIMER_FREQ / RENDER_FREQ;
+    const FONT_SIZE: u32 = 14;
+    static FONT_NORMAL: &[u8] = include_bytes!("console/Tamzen7x14r.ttf");
+    static FONT_BOLD: &[u8] = include_bytes!("console/Tamzen7x14b.ttf");
 
     let buf = unsafe { Box::from_raw(buf as *mut ScreenBuffer) };
-    let mut buf = TextBuffer::new(*buf, Color::WHITE, Color::BLACK);
+    let format = buf.format();
+    let mut buf = MonospaceTextBuffer::new(
+        *buf,
+        MonospaceFont::new(FONT_SIZE, FONT_NORMAL, FONT_BOLD, format),
+    );
     let mut next_render_ticks = 0;
 
     OUT_READY.store(true, Ordering::SeqCst);

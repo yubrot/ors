@@ -291,6 +291,7 @@ impl Task {
 struct TaskData {
     id: TaskId,
     priority: Priority,
+    #[allow(dead_code)]
     stack: Box<[u8]>,
     ctx: UnsafeCell<Context>,
 }
