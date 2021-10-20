@@ -3,16 +3,39 @@ use crate::interrupts::{ticks, TIMER_FREQ};
 use crate::sync::queue::Queue;
 use crate::task;
 use alloc::boxed::Box;
+use core::convert::TryInto;
 use core::fmt;
 use core::sync::atomic::{AtomicBool, Ordering};
-use log::{info, trace};
-use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
+use log::trace;
+
+mod ansi;
+mod kbd;
 
 const OUT_CHUNK_SIZE: usize = 64;
 
+static IN: Queue<Input, 128> = Queue::new();
 static OUT: Queue<heapless::String<OUT_CHUNK_SIZE>, 128> = Queue::new();
 static OUT_READY: AtomicBool = AtomicBool::new(false);
 static RAW_IN: Queue<RawInput, 128> = Queue::new();
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy)]
+pub enum Input {
+    Char(char),
+    Ctrl(char),
+    Insert,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    ArrowUp,
+    ArrowDown,
+    ArrowLeft,
+    ArrowRight,
+}
+
+pub fn input_queue() -> &'static Queue<Input, 128> {
+    &IN
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct ConsoleWrite;
@@ -87,24 +110,24 @@ extern "C" fn handle_output(buf: u64) -> ! {
 }
 
 extern "C" fn handle_raw_input(_: u64) -> ! {
-    let mut kbd = Keyboard::new(layouts::Jis109Key, ScancodeSet1, HandleControl::Ignore);
+    let mut kbd_decoder = kbd::Decoder::new();
+    let mut com1_decoder = ansi::Decoder::new();
 
     loop {
         let input = RAW_IN.dequeue();
-        match input {
-            RawInput::Kbd(input) => {
-                if let Ok(Some(e)) = kbd.add_byte(input) {
-                    if let Some(key) = kbd.process_keyevent(e) {
-                        match key {
-                            DecodedKey::RawKey(key) => info!("KBD: {:?}", key),
-                            DecodedKey::Unicode(ch) => info!("KBD: {}", ch),
-                        }
-                    }
-                }
+        if let Some(input) = match input {
+            RawInput::Kbd(input) => kbd_decoder.add(input),
+            RawInput::Com1(0x7f) => Some(Input::Char('\x08')), // DEL -> BS
+            RawInput::Com1(0x0d) => Some(Input::Char('\x0A')), // CR  -> LF
+            RawInput::Com1(input) if input <= 0x7e => com1_decoder
+                .add_char(char::from(input))
+                .and_then(|input| input.try_into().ok()),
+            _ => {
+                trace!("console: Unhandled raw-input: {:?}", input);
+                None
             }
-            RawInput::Com1(input) => {
-                info!("COM1: {}", char::from(input));
-            }
+        } {
+            let _ = IN.try_enqueue(input);
         }
     }
 }

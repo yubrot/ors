@@ -49,6 +49,7 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     devices::pci::initialize_devices();
     devices::serial::default_port().init();
     console::initialize((*fb).into());
+    task::scheduler().add(task::Priority::L1, terminal, 0);
     drop(cli);
 
     #[cfg(test)]
@@ -56,6 +57,17 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
 
     loop {
         x64::hlt()
+    }
+}
+
+extern "C" fn terminal(_: u64) -> ! {
+    use log::info;
+
+    // TODO: implementation
+
+    loop {
+        let input = console::input_queue().dequeue();
+        info!("{:?}", input);
     }
 }
 
