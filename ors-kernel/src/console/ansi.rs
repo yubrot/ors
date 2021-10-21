@@ -296,14 +296,14 @@ impl Color {
         use NamedColor::*;
         use NamedColorVariation::*;
         Ok(match n {
-            0 => Named(Black, ForceDimmer),
-            1 => Named(Red, ForceDimmer),
-            2 => Named(Green, ForceDimmer),
-            3 => Named(Yellow, ForceDimmer),
-            4 => Named(Blue, ForceDimmer),
-            5 => Named(Magenta, ForceDimmer),
-            6 => Named(Cyan, ForceDimmer),
-            7 => Named(White, ForceDimmer),
+            0 => Named(Black, Dimmer),
+            1 => Named(Red, Dimmer),
+            2 => Named(Green, Dimmer),
+            3 => Named(Yellow, Dimmer),
+            4 => Named(Blue, Dimmer),
+            5 => Named(Magenta, Dimmer),
+            6 => Named(Cyan, Dimmer),
+            7 => Named(White, Dimmer),
             8 => Named(Black, ForceBrighter),
             9 => Named(Red, ForceBrighter),
             10 => Named(Green, ForceBrighter),

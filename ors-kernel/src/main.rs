@@ -26,6 +26,7 @@ pub mod logger;
 pub mod paging;
 pub mod phys_memory;
 pub mod segmentation;
+mod shell;
 pub mod sync;
 pub mod task;
 pub mod x64;
@@ -49,7 +50,7 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     devices::pci::initialize_devices();
     devices::serial::default_port().init();
     console::initialize((*fb).into());
-    task::scheduler().add(task::Priority::L1, terminal, 0);
+    task::scheduler().add(task::Priority::L1, shell::run, 0);
     drop(cli);
 
     #[cfg(test)]
@@ -57,60 +58,6 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
 
     loop {
         x64::hlt()
-    }
-}
-
-extern "C" fn terminal(_: u64) -> ! {
-    // TODO: implementation
-
-    kprint!("\x1b[H\x1b[2J");
-
-    loop {
-        let input = console::input_queue().dequeue();
-        if let console::Input::Char(ch) = input {
-            match ch {
-                'a' => kprint!("\x1b[A"),
-                'A' => kprint!("\x1b[3A"),
-                'b' => kprint!("\x1b[B"),
-                'B' => kprint!("\x1b[3B"),
-                'c' => kprint!("\x1b[C"),
-                'C' => kprint!("\x1b[3C"),
-                'd' => kprint!("\x1b[D"),
-                'D' => kprint!("\x1b[3D"),
-                'e' => kprint!("\x1b[E"),
-                'E' => kprint!("\x1b[3E"),
-                'f' => kprint!("\x1b[F"),
-                'F' => kprint!("\x1b[3F"),
-                'g' => kprint!("\x1b[G"),
-                'G' => kprint!("\x1b[3G"),
-                'h' => kprint!("\x1b[H"),
-                'H' => kprint!("\x1b[4;8H"),
-                'j' => kprint!("\x1b[J"),
-                'J' => kprint!("\x1b[1J"),
-                'z' => kprint!("\x1b[2J"),
-                'k' => kprint!("\x1b[K"),
-                'K' => kprint!("\x1b[1K"),
-                'x' => kprint!("\x1b[2K"),
-                '0' => kprint!("\x1b[m"),
-                '1' => kprint!("\x1b[1m"),
-                '2' => kprint!("\x1b[22m"),
-                '3' => kprint!("\x1b[30m"),
-                '4' => kprint!("\x1b[31m"),
-                '5' => kprint!("\x1b[37m"),
-                '#' => kprint!("\x1b[1;30m"),
-                '$' => kprint!("\x1b[1;31m"),
-                '%' => kprint!("\x1b[1;37m"),
-                '6' => kprint!("\x1b[40m"),
-                '7' => kprint!("\x1b[44m"),
-                '8' => kprint!("\x1b[47m"),
-                '9' => kprint!("\x1b[49m"),
-                'p' => kprint!("\x1b[38;5;254m"),
-                'q' => kprint!("\x1b[48;5;254m"),
-                _ => kprint!("{},", ch),
-            }
-        } else {
-            kprintln!("{:?}", input);
-        }
     }
 }
 
