@@ -1,4 +1,4 @@
-use crate::graphics::{FrameBuffer, MonospaceFont, MonospaceTextBuffer, ScreenBuffer};
+use crate::graphics::ScreenBuffer;
 use crate::interrupts::{ticks, TIMER_FREQ};
 use crate::sync::queue::Queue;
 use crate::task;
@@ -10,6 +10,8 @@ use log::trace;
 
 mod ansi;
 mod kbd;
+mod screen;
+mod theme;
 
 const OUT_CHUNK_SIZE: usize = 64;
 
@@ -17,6 +19,13 @@ static IN: Queue<Input, 128> = Queue::new();
 static OUT: Queue<heapless::String<OUT_CHUNK_SIZE>, 128> = Queue::new();
 static OUT_READY: AtomicBool = AtomicBool::new(false);
 static RAW_IN: Queue<RawInput, 128> = Queue::new();
+
+pub fn initialize(buf: ScreenBuffer) {
+    trace!("INITIALIZING console");
+    let buf = Box::into_raw(Box::new(buf)) as u64;
+    task::scheduler().add(task::Priority::MAX, handle_output, buf);
+    task::scheduler().add(task::Priority::MAX, handle_raw_input, 0);
+}
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy)]
 pub enum Input {
@@ -57,11 +66,36 @@ impl fmt::Write for ConsoleWrite {
     }
 }
 
-pub fn initialize(buf: ScreenBuffer) {
-    trace!("INITIALIZING console");
-    let buf = Box::into_raw(Box::new(buf)) as u64;
-    task::scheduler().add(task::Priority::MAX, handle_output, buf);
-    task::scheduler().add(task::Priority::MAX, handle_raw_input, 0);
+extern "C" fn handle_output(buf: u64) -> ! {
+    const RENDER_FREQ: usize = 30;
+    const RENDER_INTERVAL: usize = TIMER_FREQ / RENDER_FREQ;
+
+    let buf = unsafe { Box::from_raw(buf as *mut ScreenBuffer) };
+    let mut screen = screen::Screen::new(*buf, theme::OneMonokai);
+    let mut next_render_ticks = 0;
+    let mut decoder = ansi::Decoder::new();
+
+    OUT_READY.store(true, Ordering::SeqCst);
+
+    loop {
+        let t = ticks();
+        if next_render_ticks <= t {
+            screen.render();
+            next_render_ticks = ticks() + RENDER_INTERVAL;
+        }
+
+        if let Some(out) = OUT.dequeue_timeout(next_render_ticks - t) {
+            for ch in out.chars() {
+                match decoder.add_char(ch) {
+                    Some(ansi::DecodeResult::Just(ch)) => screen.put_char(ch),
+                    Some(ansi::DecodeResult::EscapeSequence(es)) => {
+                        screen.handle_escape_sequence(es)
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]
@@ -74,39 +108,6 @@ pub fn accept_raw_input(input: RawInput) {
     // Normally this function is called from interrupt handlers,
     // so failure of enqueuing is ignored without blocking.
     let _ = RAW_IN.try_enqueue(input);
-}
-
-extern "C" fn handle_output(buf: u64) -> ! {
-    const RENDER_FREQ: usize = 30;
-    const RENDER_INTERVAL: usize = TIMER_FREQ / RENDER_FREQ;
-    const FONT_SIZE: u32 = 14;
-    static FONT_NORMAL: &[u8] = include_bytes!("console/Tamzen7x14r.ttf");
-    static FONT_BOLD: &[u8] = include_bytes!("console/Tamzen7x14b.ttf");
-
-    let buf = unsafe { Box::from_raw(buf as *mut ScreenBuffer) };
-    let format = buf.format();
-    let mut buf = MonospaceTextBuffer::new(
-        *buf,
-        MonospaceFont::new(FONT_SIZE, FONT_NORMAL, FONT_BOLD, format),
-    );
-    let mut next_render_ticks = 0;
-
-    OUT_READY.store(true, Ordering::SeqCst);
-
-    loop {
-        let t = ticks();
-        if next_render_ticks <= t {
-            buf.render();
-            next_render_ticks = ticks() + RENDER_INTERVAL;
-        }
-
-        if let Some(out) = OUT.dequeue_timeout(next_render_ticks - t) {
-            // TODO: Handle escape sequence
-            for c in out.chars() {
-                buf.put(c);
-            }
-        }
-    }
 }
 
 extern "C" fn handle_raw_input(_: u64) -> ! {

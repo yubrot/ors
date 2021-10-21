@@ -11,7 +11,7 @@ impl log::Log for KernelLogger {
     }
 
     fn log(&self, record: &log::Record) {
-        kprintln!("{}: {}", record.level(), record.args());
+        sprintln!("{}: {}", record.level(), record.args());
     }
 
     fn flush(&self) {}

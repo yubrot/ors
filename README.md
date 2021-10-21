@@ -49,3 +49,4 @@ ors is based on [MikanOS](https://github.com/uchan-nos/mikanos) and [blog_os (Se
 ## Resources
 
 - ors uses [Tamzen font](https://github.com/sunaku/tamzen-font).
+- ors uses [One Monokai Theme](https://github.com/azemoh/vscode-one-monokai) as a color scheme of the terminal.

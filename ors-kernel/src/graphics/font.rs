@@ -74,3 +74,9 @@ pub enum FontStyle {
     Normal,
     Bold,
 }
+
+impl FontStyle {
+    pub fn is_bold(self) -> bool {
+        matches!(self, Self::Bold)
+    }
+}
