@@ -65,6 +65,24 @@ impl BitmapFrameManager {
         }
     }
 
+    pub fn total_frames(&self) -> usize {
+        self.end.0 - self.begin.0
+    }
+
+    pub fn available_frames(&self) -> usize {
+        (self.begin.0..self.end.0)
+            .filter(|i| self.get_bit(Frame(*i)))
+            .count()
+    }
+
+    pub fn availability_in_range(&self, a: f64, b: f64) -> f64 {
+        assert!(0.0 <= a && a < b && b <= 1.0);
+        let a = self.begin.0 + ((self.end.0 - self.begin.0) as f64 * a) as usize;
+        let b = self.begin.0 + ((self.end.0 - self.begin.0) as f64 * b) as usize;
+        let n = (a..b).filter(|i| self.get_bit(Frame(*i))).count();
+        n as f64 / (b - a) as f64
+    }
+
     fn set_memory_range(&mut self, begin: Frame, end: Frame) {
         self.begin = begin;
         self.end = end;
