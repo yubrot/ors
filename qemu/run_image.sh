@@ -19,8 +19,9 @@ qemu-system-x86_64 \
   -m 1G \
   -drive if=pflash,format=raw,readonly=on,file=$DEVENV_DIR/OVMF_CODE.fd \
   -drive if=pflash,format=raw,file=$DEVENV_DIR/OVMF_VARS.fd \
-  -drive if=ide,index=0,media=disk,format=raw,file=$DISK_IMG \
+  -drive if=none,id=drive0,format=raw,file=$DISK_IMG \
   -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+  -device virtio-blk-pci,drive=drive0 \
   -serial mon:stdio \
   $QEMU_OPTS
 [ $? -eq 33 -o $? -eq 0 ]
