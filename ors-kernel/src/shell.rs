@@ -17,7 +17,7 @@ pub extern "C" fn run(_: u64) -> ! {
     let mut command_buf = String::new();
     let mut cursor = 0;
 
-    kprint!("{}", CLEAR);
+    cprint!("{}", CLEAR);
     kprintln!("[ors shell]");
 
     loop {
@@ -121,8 +121,8 @@ fn execute_command(command_buf: &str) {
                     if d.is_virtio() {
                         kprintln!("  subsystem_id = {}", d.subsystem_id());
                     }
-                    if let Some(cap) = d.msi_x() {
-                        kprintln!("  msi-x = {{}}"); // TODO
+                    if let Some(msi_x) = d.msi_x() {
+                        kprintln!("  msi-x = {{ table_size = {} }}", msi_x.table_size());
                     }
                     kprintln!("}}");
                 }

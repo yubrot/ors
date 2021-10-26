@@ -153,9 +153,9 @@ unsafe fn initialize_io_apic() {
     // https://wiki.osdev.org/APIC
     // https://github.com/mit-pdos/xv6-public/blob/master/ioapic.c#L49
 
-    // const LEVEL: u64 = 0x00008000; // Level-triggered (vs edge-)
-    // const ACTIVELOW: u64 = 0x00002000; // Active low (vs high)
-    // const LOGICAL: u64 = 0x00000800; // Destination is CPU id (vs APIC ID)
+    const LEVEL: u64 = 0x00008000; // Level-triggered (vs edge-)
+                                   // const ACTIVELOW: u64 = 0x00002000; // Active low (vs high)
+                                   // const LOGICAL: u64 = 0x00000800; // Destination is CPU id (vs APIC ID)
     const DISABLED: u64 = 0x00010000; // Interrupt disabled
 
     let max_intr = ioapic.ver() >> 16 & 0xFF;
@@ -167,8 +167,14 @@ unsafe fn initialize_io_apic() {
 
     // TODO: Use BSP?
     let cpu0 = (LAPIC.apic_id() as u64) << (24 + 32);
-    ioapic.set_redirection_table_at(IRQ_KBD, (EXTERNAL_IRQ_OFFSET + IRQ_KBD) as u64 | cpu0);
-    ioapic.set_redirection_table_at(IRQ_COM1, (EXTERNAL_IRQ_OFFSET + IRQ_COM1) as u64 | cpu0);
+    ioapic.set_redirection_table_at(
+        IRQ_KBD,
+        (EXTERNAL_IRQ_OFFSET + IRQ_KBD) as u64 | cpu0 | LEVEL,
+    );
+    ioapic.set_redirection_table_at(
+        IRQ_COM1,
+        (EXTERNAL_IRQ_OFFSET + IRQ_COM1) as u64 | cpu0 | LEVEL,
+    );
 }
 
 // Be careful to avoid deadlocks:

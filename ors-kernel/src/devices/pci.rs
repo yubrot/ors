@@ -2,6 +2,7 @@
 
 use crate::x64;
 use bit_field::BitField;
+use core::ptr;
 use derive_new::new;
 use heapless::Vec;
 use log::trace;
@@ -23,6 +24,7 @@ pub fn devices() -> &'static Vec<Device, 32> {
 }
 
 // https://wiki.osdev.org/PCI
+// https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html
 
 static mut CONFIG_ADDRESS: x64::PortWriteOnly<u32> = x64::PortWriteOnly::new(0x0cf8);
 static mut CONFIG_DATA: x64::Port<u32> = x64::Port::new(0x0cfc);
@@ -95,6 +97,7 @@ impl Device {
     }
 
     pub unsafe fn is_virtio(self) -> bool {
+        // NOTE: Should this be named is_transitional_virtio?
         let vendor_id = self.vendor_id();
         let device_id = self.device_id();
         vendor_id == 0x1af4 && 0x1000 <= device_id && device_id <= 0x103f
@@ -182,8 +185,8 @@ impl Device {
         Capabilities::new(self, 0)
     }
 
-    pub unsafe fn msi_x(self) -> Option<Capability> {
-        self.capabilities().find(|c| c.is_msi_x())
+    pub unsafe fn msi_x(self) -> Option<MsiX> {
+        self.capabilities().find_map(|c| c.msi_x())
     }
 
     pub unsafe fn interrupt_line(self) -> u8 {
@@ -333,10 +336,147 @@ impl Capability {
         self.id() == 0x11
     }
 
+    pub unsafe fn is_vendor_specific(self) -> bool {
+        self.id() == 0x09
+    }
+
+    pub unsafe fn msi_x(self) -> Option<MsiX> {
+        if self.is_msi_x() {
+            Some(MsiX::new(self.device, self.pointer))
+        } else {
+            None
+        }
+    }
+
     pub unsafe fn next_capability_pointer(self) -> Option<u8> {
         match (self.device.read(self.pointer) >> 8) as u8 {
             0 => None,
             p => Some(p),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, new)]
+pub struct MsiX {
+    device: Device,
+    pointer: u8,
+}
+
+impl MsiX {
+    unsafe fn message_control(self) -> u16 {
+        (self.device.read(self.pointer) >> 16) as u16
+    }
+
+    pub unsafe fn enable(self) {
+        let value = self.device.read(self.pointer) | (1 << 31);
+        self.device.write(self.pointer, value)
+    }
+
+    pub unsafe fn table_size(self) -> usize {
+        (self.message_control() & 0x7ff) as usize + 1
+    }
+
+    /// Table BAR Indicator
+    unsafe fn table_bir(self) -> u8 {
+        self.device.read(self.pointer + 0x04) as u8
+    }
+
+    unsafe fn table_offset(self) -> u32 {
+        self.device.read(self.pointer + 0x04) >> 8
+    }
+
+    unsafe fn table_bar(self) -> Bar {
+        self.device.read_bar(self.table_bir())
+    }
+
+    pub unsafe fn table(self) -> MsiXTable {
+        let addr = self.table_bar().mmio_base().unwrap() + self.table_offset() as usize;
+        MsiXTable {
+            ptr: addr as *mut u32,
+            len: self.table_size(),
+        }
+    }
+
+    /// Pending Bit Array BAR Indicator
+    pub unsafe fn pba_bir(self) -> u8 {
+        self.device.read(self.pointer + 0x08) as u8
+    }
+
+    pub unsafe fn pba_offset(self) -> u32 {
+        self.device.read(self.pointer + 0x08) >> 8
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MsiXTable {
+    ptr: *mut u32,
+    len: usize,
+}
+
+impl MsiXTable {
+    pub fn len(self) -> usize {
+        self.len
+    }
+
+    pub fn entry(self, index: usize) -> MsiXTableEntry {
+        assert!(index < self.len());
+        MsiXTableEntry {
+            ptr: unsafe { self.ptr.add(4 * index) },
+        }
+    }
+
+    pub fn entries(self) -> impl Iterator<Item = MsiXTableEntry> {
+        (0..self.len()).map(move |i| self.entry(i))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MsiXTableEntry {
+    ptr: *mut u32,
+}
+
+impl MsiXTableEntry {
+    pub unsafe fn enable(self, lapic_id: u32, vector: u32) {
+        assert!(lapic_id < 256);
+        assert!(32 <= vector && vector <= 254);
+
+        const ADDRESS_SUFFIX: u32 = 0xfeee << 20;
+        let reserved_bits = self.message_address() & 0xff0;
+        self.set_message_address((lapic_id << 12) | ADDRESS_SUFFIX | reserved_bits); // TODO: RH | DM (See Intel SDM)
+        const LEVEL: u32 = 1 << 15; // Level-triggered (vs edge-)
+        let reserved_bits = self.message_data() & 0xffff3800;
+        self.set_message_data(vector | LEVEL | reserved_bits); // TODO: DM
+        let reserved_bits = self.vector_control() & !1; // unmask
+        self.set_vector_control(reserved_bits);
+    }
+
+    pub unsafe fn disable(self) {
+        let value = self.vector_control() | 1; // mask
+        self.set_vector_control(value);
+    }
+
+    unsafe fn message_address(self) -> u32 {
+        // NOTE: upper 32bits of Message address are not used in x86_64
+        ptr::read_volatile(self.ptr)
+    }
+
+    unsafe fn set_message_address(self, value: u32) {
+        ptr::write_volatile(self.ptr, value)
+    }
+
+    unsafe fn message_data(self) -> u32 {
+        ptr::read_volatile(self.ptr.add(2))
+    }
+
+    unsafe fn set_message_data(self, value: u32) {
+        ptr::write_volatile(self.ptr.add(2), value)
+    }
+
+    unsafe fn vector_control(self) -> u32 {
+        ptr::read_volatile(self.ptr.add(3))
+    }
+
+    unsafe fn set_vector_control(self, value: u32) {
+        ptr::write_volatile(self.ptr.add(3), value)
     }
 }

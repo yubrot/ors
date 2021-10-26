@@ -29,6 +29,22 @@ macro_rules! kprint {
     }};
 }
 
+#[allow(unused_macros)]
+macro_rules! cprintln {
+    ($( $t:tt )*) => {{
+        use core::fmt::Write;
+        writeln!(crate::console::ConsoleWrite, $( $t )*).unwrap();
+    }};
+}
+
+#[allow(unused_macros)]
+macro_rules! cprint {
+    ($( $t:tt )*) => {{
+        use core::fmt::Write;
+        write!(crate::console::ConsoleWrite, $( $t )*).unwrap();
+    }};
+}
+
 /// Write to raw_default_port. Used for debugging output in interrupt handlers and panic handlers.
 #[allow(unused_macros)]
 macro_rules! sprintln {
