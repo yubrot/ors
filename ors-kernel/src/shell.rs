@@ -99,10 +99,33 @@ fn execute_command(command_buf: &str) {
         }
         "lspci" => {
             for d in devices::pci::devices() {
-                kprintln!("device({}, {}, {}) = {{", d.bus, d.device, d.function);
-                kprintln!("  device_id = {}", d.device_id());
-                kprintln!("  vendor_id = {:x}", d.vendor_id());
-                kprintln!("}}");
+                unsafe {
+                    let ty = d.device_type();
+                    kprintln!("{:02x}:{:02x}.{:02x} = {{", d.bus, d.device, d.function);
+                    kprint!("  vendor_id = {:x}", d.vendor_id());
+                    if d.is_vendor_intel() {
+                        kprint!(" (intel)");
+                    }
+                    kprintln!();
+                    kprint!("  device_id = {:x}", d.device_id());
+                    if d.is_virtio() {
+                        kprint!(" (virtio)");
+                    }
+                    kprintln!();
+                    kprintln!(
+                        "  device_type = {{ class_code = {:02x}, subclass = {:02x}, interface = {:02x} }}",
+                        ty.class_code,
+                        ty.subclass,
+                        ty.prog_interface
+                    );
+                    if d.is_virtio() {
+                        kprintln!("  subsystem_id = {}", d.subsystem_id());
+                    }
+                    if let Some(cap) = d.msi_x() {
+                        kprintln!("  msi-x = {{}}"); // TODO
+                    }
+                    kprintln!("}}");
+                }
             }
         }
         "color" => {

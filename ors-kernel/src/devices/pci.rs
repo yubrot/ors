@@ -12,7 +12,7 @@ static DEVICES: Once<Vec<Device, 32>> = Once::new();
 pub fn initialize_devices() {
     DEVICES.call_once(|| {
         trace!("INITIALIZING PCI devices");
-        Device::scan::<32>().unwrap()
+        unsafe { Device::scan::<32>() }.unwrap()
     });
 }
 
@@ -41,8 +41,8 @@ impl ConfigAddress {
         Self(value)
     }
 
-    fn write(self) {
-        unsafe { CONFIG_ADDRESS.write(self.0) }
+    unsafe fn write(self) {
+        CONFIG_ADDRESS.write(self.0)
     }
 }
 
@@ -50,12 +50,12 @@ impl ConfigAddress {
 struct ConfigData(u32);
 
 impl ConfigData {
-    fn read() -> Self {
-        ConfigData(unsafe { CONFIG_DATA.read() })
+    unsafe fn read() -> Self {
+        ConfigData(CONFIG_DATA.read())
     }
 
-    fn write(self) {
-        unsafe { CONFIG_DATA.write(self.0) }
+    unsafe fn write(self) {
+        CONFIG_DATA.write(self.0)
     }
 }
 
@@ -72,54 +72,75 @@ pub enum ScanError {
 }
 
 impl Device {
-    fn read(self, addr: u8) -> u32 {
+    unsafe fn read(self, addr: u8) -> u32 {
         ConfigAddress::new(self.bus, self.device, self.function, addr).write();
         ConfigData::read().0
     }
 
-    fn write(self, addr: u8, value: u32) {
+    unsafe fn write(self, addr: u8, value: u32) {
         ConfigAddress::new(self.bus, self.device, self.function, addr).write();
         ConfigData(value).write();
     }
 
-    pub fn vendor_id(self) -> u16 {
+    pub unsafe fn vendor_id(self) -> u16 {
         self.read(0x00) as u16
     }
 
-    pub fn is_vendor_intel(self) -> bool {
+    pub unsafe fn is_vendor_intel(self) -> bool {
         self.vendor_id() == 0x8086
     }
 
-    pub fn device_id(self) -> u16 {
+    pub unsafe fn device_id(self) -> u16 {
         (self.read(0x00) >> 16) as u16
     }
 
-    pub fn class_code(self) -> ClassCode {
+    pub unsafe fn is_virtio(self) -> bool {
+        let vendor_id = self.vendor_id();
+        let device_id = self.device_id();
+        vendor_id == 0x1af4 && 0x1000 <= device_id && device_id <= 0x103f
+    }
+
+    pub unsafe fn command(self) -> u16 {
+        self.read(0x04) as u16
+    }
+
+    pub unsafe fn status(self) -> u16 {
+        (self.read(0x04) >> 16) as u16
+    }
+
+    pub unsafe fn device_type(self) -> DeviceType {
         let data = self.read(0x08);
-        ClassCode::new((data >> 24) as u8, (data >> 16) as u8, (data >> 8) as u8)
+        DeviceType::new((data >> 24) as u8, (data >> 16) as u8, (data >> 8) as u8)
     }
 
-    pub fn header_type(self) -> u8 {
+    pub unsafe fn header_type(self) -> u8 {
         let data = self.read(0x0c);
-        (data >> 16) as u8
+        (data >> 16) as u8 & 0x7f
     }
 
-    pub fn is_single_function(self) -> bool {
-        (self.header_type() & 0x80) == 0
+    pub unsafe fn is_single_function(self) -> bool {
+        let data = self.read(0x0c);
+        (data & (0x80 << 16)) == 0
     }
 
-    pub fn bus_numbers(self) -> (u8, u8) {
-        assert!(self.class_code().is_standard_pci_to_pci_bridge());
-        let data = self.read(0x18);
-        (data as u8, (data >> 8) as u8) // (primary, secondary)
+    // BIST
+
+    pub unsafe fn num_bars(self) -> u8 {
+        match self.header_type() {
+            0x00 => 6,
+            0x01 => 2,
+            _ => 0,
+        }
     }
 
-    pub fn read_bar(self, index: u8) -> Bar {
+    pub unsafe fn read_bar(self, index: u8) -> Bar {
+        assert!(index < self.num_bars());
+
         // https://wiki.osdev.org/PCI#Base_Address_Registers
         let bar = self.read(base_address_register_address(index));
         if (bar & 0x1) != 0 {
             let bar = (bar & !0x3) as u16;
-            Bar::IoPort(x64::Port::new(bar))
+            Bar::IoPort(bar)
         } else {
             if (bar & 0x4) != 0 {
                 let bar_lower = (bar as u64) & !0xf;
@@ -133,7 +154,47 @@ impl Device {
         }
     }
 
-    pub fn scan<const N: usize>() -> Result<Vec<Self, N>, ScanError> {
+    pub unsafe fn bus_numbers(self) -> (u8, u8) {
+        assert!(self.device_type().is_standard_pci_to_pci_bridge());
+        let data = self.read(0x18);
+        (data as u8, (data >> 8) as u8) // (primary, secondary)
+    }
+
+    pub unsafe fn subsystem_vendor_id(self) -> u16 {
+        assert_eq!(self.header_type(), 0x00);
+        self.read(0x2C) as u16
+    }
+
+    pub unsafe fn subsystem_id(self) -> u16 {
+        assert_eq!(self.header_type(), 0x00);
+        (self.read(0x2C) >> 16) as u16
+    }
+
+    pub unsafe fn capability_pointer(self) -> Option<u8> {
+        if matches!(self.header_type(), 0x00 | 0x01) && (self.status() & 0x16) != 0 {
+            Some(self.read(0x34) as u8)
+        } else {
+            None
+        }
+    }
+
+    pub unsafe fn capabilities(self) -> Capabilities {
+        Capabilities::new(self, 0)
+    }
+
+    pub unsafe fn msi_x(self) -> Option<Capability> {
+        self.capabilities().find(|c| c.is_msi_x())
+    }
+
+    pub unsafe fn interrupt_line(self) -> u8 {
+        self.read(0x3C) as u8
+    }
+
+    pub unsafe fn interrupt_pin(self) -> u8 {
+        (self.read(0x3C) >> 8) as u8
+    }
+
+    pub unsafe fn scan<const N: usize>() -> Result<Vec<Self, N>, ScanError> {
         let mut devices = Vec::new();
 
         // Checks whether the host bridge (bus=0, device=0) is a multifunction device
@@ -150,7 +211,7 @@ impl Device {
         Ok(devices)
     }
 
-    fn scan_bus<const N: usize>(bus: u8, dest: &mut Vec<Self, N>) -> Result<(), ScanError> {
+    unsafe fn scan_bus<const N: usize>(bus: u8, dest: &mut Vec<Self, N>) -> Result<(), ScanError> {
         for device in 0..32 {
             if Self::new(bus, device, 0).vendor_id() != 0xffff {
                 Self::scan_device(bus, device, dest)?;
@@ -159,7 +220,7 @@ impl Device {
         Ok(())
     }
 
-    fn scan_device<const N: usize>(
+    unsafe fn scan_device<const N: usize>(
         bus: u8,
         device: u8,
         dest: &mut Vec<Self, N>,
@@ -175,7 +236,7 @@ impl Device {
         Ok(())
     }
 
-    fn scan_function<const N: usize>(
+    unsafe fn scan_function<const N: usize>(
         bus: u8,
         device: u8,
         function: u8,
@@ -184,7 +245,7 @@ impl Device {
         let d = Self::new(bus, device, function);
         dest.push(d).map_err(|_| ScanError::Full)?;
 
-        if d.class_code().is_standard_pci_to_pci_bridge() {
+        if d.device_type().is_standard_pci_to_pci_bridge() {
             let (_, secondary_bus) = d.bus_numbers();
             Self::scan_bus(secondary_bus, dest)?;
         }
@@ -196,36 +257,86 @@ impl Device {
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Bar {
     MemoryAddress(u64),
-    IoPort(x64::Port<u32>),
+    IoPort(u16),
 }
 
 impl Bar {
-    pub fn mmio_base(self) -> usize {
+    pub fn mmio_base(self) -> Option<usize> {
         match self {
-            Bar::MemoryAddress(addr) => addr as usize,
-            Bar::IoPort(_) => panic!("Not a memory-mapped I/O address: {:?}", self),
+            Bar::MemoryAddress(addr) => Some(addr as usize),
+            Bar::IoPort(_) => None,
+        }
+    }
+
+    pub fn io_port(self) -> Option<u16> {
+        match self {
+            Bar::MemoryAddress(_) => None,
+            Bar::IoPort(port) => Some(port),
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, new)]
-pub struct ClassCode {
-    pub base: u8,
-    pub sub: u8,
-    pub interface: u8,
+pub struct DeviceType {
+    pub class_code: u8,
+    pub subclass: u8,
+    pub prog_interface: u8,
 }
 
-impl ClassCode {
+impl DeviceType {
     pub fn is_standard_pci_to_pci_bridge(self) -> bool {
-        self.base == 0x06 && self.sub == 0x04
+        self.class_code == 0x06 && self.subclass == 0x04
     }
 
     pub fn is_xhci(self) -> bool {
-        self.base == 0x0c && self.sub == 0x03 && self.interface == 0x30
+        self.class_code == 0x0c && self.subclass == 0x03 && self.prog_interface == 0x30
     }
 }
 
 fn base_address_register_address(index: u8) -> u8 {
     assert!(index < 6);
     0x10 + 4 * index
+}
+
+#[derive(Debug, Clone, Copy, new)]
+pub struct Capabilities {
+    device: Device,
+    pointer: u8,
+}
+
+impl Iterator for Capabilities {
+    type Item = Capability;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let p = if self.pointer == 0 {
+            unsafe { self.device.capability_pointer() }?
+        } else {
+            unsafe { Capability::new(self.device, self.pointer).next_capability_pointer() }?
+        };
+        self.pointer = p;
+        Some(Capability::new(self.device, p))
+    }
+}
+
+#[derive(Debug, Clone, Copy, new)]
+pub struct Capability {
+    device: Device,
+    pointer: u8,
+}
+
+impl Capability {
+    pub unsafe fn id(self) -> u8 {
+        self.device.read(self.pointer) as u8
+    }
+
+    pub unsafe fn is_msi_x(self) -> bool {
+        self.id() == 0x11
+    }
+
+    pub unsafe fn next_capability_pointer(self) -> Option<u8> {
+        match (self.device.read(self.pointer) >> 8) as u8 {
+            0 => None,
+            p => Some(p),
+        }
+    }
 }
