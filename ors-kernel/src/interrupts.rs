@@ -153,9 +153,9 @@ unsafe fn initialize_io_apic() {
     // https://wiki.osdev.org/APIC
     // https://github.com/mit-pdos/xv6-public/blob/master/ioapic.c#L49
 
+    // const ACTIVELOW: u64 = 0x00002000; // Active low (vs high)
+    // const LOGICAL: u64 = 0x00000800; // Destination is CPU id (vs APIC ID)
     const LEVEL: u64 = 0x00008000; // Level-triggered (vs edge-)
-                                   // const ACTIVELOW: u64 = 0x00002000; // Active low (vs high)
-                                   // const LOGICAL: u64 = 0x00000800; // Destination is CPU id (vs APIC ID)
     const DISABLED: u64 = 0x00010000; // Interrupt disabled
 
     let max_intr = ioapic.ver() >> 16 & 0xFF;
