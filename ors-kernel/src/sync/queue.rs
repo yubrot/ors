@@ -106,6 +106,3 @@ impl<T, const N: usize> Queue<T, N> {
         Some(value)
     }
 }
-
-unsafe impl<T, const N: usize> Send for Queue<T, N> where T: Send {}
-unsafe impl<T, const N: usize> Sync for Queue<T, N> where T: Send {}
