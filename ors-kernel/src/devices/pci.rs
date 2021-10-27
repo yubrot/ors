@@ -367,6 +367,10 @@ impl MsiX {
         (self.device.read(self.pointer) >> 16) as u16
     }
 
+    pub unsafe fn is_enabled(self) -> bool {
+        (self.device.read(self.pointer) & (1 << 31)) != 0
+    }
+
     pub unsafe fn enable(self) {
         let value = self.device.read(self.pointer) | (1 << 31);
         self.device.write(self.pointer, value)
