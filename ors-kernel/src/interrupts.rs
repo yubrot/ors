@@ -5,6 +5,7 @@ use crate::devices;
 use crate::segmentation::DOUBLE_FAULT_IST_INDEX;
 use crate::task;
 use crate::x64;
+use core::ops::Range;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::Lazy;
 
@@ -56,10 +57,13 @@ pub unsafe fn initialize() {
     initialize_io_apic();
 }
 
-const EXTERNAL_IRQ_OFFSET: u32 = 32; // first 32 entries are reserved by CPU
-const IRQ_TIMER: u32 = 0;
-const IRQ_KBD: u32 = 1; // Keyboard on PS/2 port
-const IRQ_COM1: u32 = 4; // First serial port
+const PIC_8259_IRQ_OFFSET: u32 = 32; // first 32 entries are reserved by CPU
+const IRQ_TIMER: u32 = PIC_8259_IRQ_OFFSET + 0;
+const IRQ_KBD: u32 = PIC_8259_IRQ_OFFSET + 1; // Keyboard on PS/2 port
+const IRQ_COM1: u32 = PIC_8259_IRQ_OFFSET + 4; // First serial port
+
+const VIRTIO_BLOCK_IRQ_OFFSET: u32 = PIC_8259_IRQ_OFFSET + 16; // next 16 entries are for 8259 PIC interrupts
+const IRQ_VIRTIO_BLOCK: Range<u32> = VIRTIO_BLOCK_IRQ_OFFSET..VIRTIO_BLOCK_IRQ_OFFSET + 8;
 
 static IDT: Lazy<x64::InterruptDescriptorTable> = Lazy::new(|| unsafe { prepare_idt() });
 
@@ -75,15 +79,22 @@ unsafe fn prepare_idt() -> x64::InterruptDescriptorTable {
         .set_handler_fn(double_fault_handler)
         .set_stack_index(DOUBLE_FAULT_IST_INDEX)
         .disable_interrupts(true);
-    idt[(EXTERNAL_IRQ_OFFSET + IRQ_TIMER) as usize]
+    idt[IRQ_TIMER as usize]
         .set_handler_fn(timer_handler)
         .disable_interrupts(true);
-    idt[(EXTERNAL_IRQ_OFFSET + IRQ_KBD) as usize]
+    idt[IRQ_KBD as usize]
         .set_handler_fn(kbd_handler)
         .disable_interrupts(true);
-    idt[(EXTERNAL_IRQ_OFFSET + IRQ_COM1) as usize]
+    idt[IRQ_COM1 as usize]
         .set_handler_fn(com1_handler)
         .disable_interrupts(true);
+
+    for (i, irq) in IRQ_VIRTIO_BLOCK.enumerate() {
+        idt[irq as usize]
+            .set_handler_fn(get_virtio_block_handler(i))
+            .disable_interrupts(true);
+    }
+
     idt
 }
 
@@ -121,7 +132,7 @@ unsafe fn initialize_local_apic() {
 
     // Enable timer interrupts
     LAPIC.set_tdcr(X1);
-    LAPIC.set_timer(PERIODIC | (EXTERNAL_IRQ_OFFSET + IRQ_TIMER));
+    LAPIC.set_timer(PERIODIC | IRQ_TIMER);
     LAPIC.set_ticr(measured_lapic_timer_freq / TIMER_FREQ as u32);
 
     // Disable  logical interrupt lines
@@ -162,18 +173,14 @@ unsafe fn initialize_io_apic() {
 
     // Mark all interrupts edge-triggered, active high, disabled, and not routed to any CPUs.
     for i in 0..max_intr {
-        ioapic.set_redirection_table_at(i, DISABLED | (EXTERNAL_IRQ_OFFSET + i) as u64);
+        ioapic.set_redirection_table_at(i, DISABLED | (PIC_8259_IRQ_OFFSET + i) as u64);
     }
 
-    // TODO: Use BSP?
-    let cpu0 = (LAPIC.apic_id() as u64) << (24 + 32);
+    let bsp = (Cpu::boot_strap().lapic_id().unwrap() as u64) << (24 + 32);
+    ioapic.set_redirection_table_at(IRQ_KBD - PIC_8259_IRQ_OFFSET, IRQ_KBD as u64 | bsp | LEVEL);
     ioapic.set_redirection_table_at(
-        IRQ_KBD,
-        (EXTERNAL_IRQ_OFFSET + IRQ_KBD) as u64 | cpu0 | LEVEL,
-    );
-    ioapic.set_redirection_table_at(
-        IRQ_COM1,
-        (EXTERNAL_IRQ_OFFSET + IRQ_COM1) as u64 | cpu0 | LEVEL,
+        IRQ_COM1 - PIC_8259_IRQ_OFFSET,
+        IRQ_COM1 as u64 | bsp | LEVEL,
     );
 }
 
@@ -228,4 +235,33 @@ extern "x86-interrupt" fn com1_handler(_stack_frame: x64::InterruptStackFrame) {
     let v = devices::serial::default_port().receive();
     console::accept_raw_input(console::RawInput::Com1(v));
     unsafe { LAPIC.set_eoi(0) };
+}
+
+extern "x86-interrupt" fn virtio_block_handler<const N: u32>(
+    _stack_frame: x64::InterruptStackFrame,
+) {
+    sprintln!("virtio_block_handler {}", N);
+    unsafe { LAPIC.set_eoi(0) };
+}
+
+fn get_virtio_block_handler(index: usize) -> extern "x86-interrupt" fn(x64::InterruptStackFrame) {
+    match index {
+        0 => virtio_block_handler::<0>,
+        1 => virtio_block_handler::<1>,
+        2 => virtio_block_handler::<2>,
+        3 => virtio_block_handler::<3>,
+        4 => virtio_block_handler::<4>,
+        5 => virtio_block_handler::<5>,
+        6 => virtio_block_handler::<6>,
+        7 => virtio_block_handler::<7>,
+        _ => panic!("Unsupported index"),
+    }
+}
+
+pub fn virtio_block_irq(index: usize) -> Option<u32> {
+    if index < IRQ_VIRTIO_BLOCK.len() {
+        Some(IRQ_VIRTIO_BLOCK.start + index as u32)
+    } else {
+        None
+    }
 }

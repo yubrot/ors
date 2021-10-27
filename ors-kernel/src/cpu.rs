@@ -33,9 +33,16 @@ pub fn initialize() {
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]
-pub enum Cpu {
-    BootStrap,
-    Application(u32),
+pub struct Cpu(CpuKind);
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]
+enum CpuKind {
+    BootStrap(
+        Option<u32>, // known lapic_id (== SYSTEM_INFO.boot_strap_lapic_id)
+    ),
+    Application(
+        u32, // lapic_id (!= SYSTEM_INFO.boot_strap_lapic_id)
+    ),
 }
 
 impl Cpu {
@@ -43,21 +50,35 @@ impl Cpu {
         if let Some(info) = SYSTEM_INFO.get() {
             let id = unsafe { info.lapic.apic_id() };
             if id == info.boot_strap_lapic_id {
-                Self::BootStrap
+                Self(CpuKind::BootStrap(Some(id)))
             } else {
-                Self::Application(id)
+                Self(CpuKind::Application(id))
             }
         } else {
-            Self::BootStrap // works under the module assumption
+            Self(CpuKind::BootStrap(None)) // works under the module assumption
         }
     }
 
+    pub fn boot_strap() -> Self {
+        Self(CpuKind::BootStrap(None))
+    }
+
     pub fn list() -> impl Iterator<Item = Cpu> {
-        core::iter::once(Self::BootStrap).chain(SYSTEM_INFO.get().into_iter().flat_map(|info| {
-            info.application_cpu_state
-                .iter()
-                .map(|(lapic_id, _)| Self::Application(*lapic_id))
-        }))
+        core::iter::once(CpuKind::BootStrap(None))
+            .chain(SYSTEM_INFO.get().into_iter().flat_map(|info| {
+                info.application_cpu_state
+                    .iter()
+                    .map(|(lapic_id, _)| CpuKind::Application(*lapic_id))
+            }))
+            .map(|kind| Self(kind))
+    }
+
+    pub fn lapic_id(self) -> Option<u32> {
+        match self.0 {
+            CpuKind::BootStrap(Some(lapic_id)) => Some(lapic_id),
+            CpuKind::BootStrap(None) => SYSTEM_INFO.get().map(|info| info.boot_strap_lapic_id),
+            CpuKind::Application(lapic_id) => Some(lapic_id),
+        }
     }
 
     /// Get the state of this CPU.
@@ -65,9 +86,9 @@ impl Cpu {
     /// releasing `crate::sync::mutex::Mutex` will lock this mutex through interrupt lock.
     /// We need to be careful about deadlocks when using this method.
     pub fn state(self) -> &'static Mutex<CpuState> {
-        match self {
-            Self::BootStrap => &BOOT_STRAP_CPU_STATE,
-            Self::Application(lapic_id) => SYSTEM_INFO
+        match self.0 {
+            CpuKind::BootStrap(_) => &BOOT_STRAP_CPU_STATE,
+            CpuKind::Application(lapic_id) => SYSTEM_INFO
                 .get()
                 .expect("Non-BSP CPU found before cpu::initialize")
                 .application_cpu_state
