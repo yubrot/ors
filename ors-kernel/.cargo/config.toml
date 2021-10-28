@@ -7,4 +7,4 @@ build-std-features = ["compiler-builtins-mem"]
 
 [target.'cfg(target_os = "none")']
 # FIXME: This assumes that the ors-loader.efi is already built
-runner = ['../qemu/make_and_run.sh', '../target/x86_64-unknown-uefi/debug/ors-loader.efi']
+runner = ['../qemu/make_and_run_image.sh', '../target/x86_64-unknown-uefi/debug/ors-loader.efi']

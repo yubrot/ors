@@ -1,6 +1,6 @@
 # ors
 
-ors is an experimental OS implementation with Rust.
+ors is an experimental x86_64 OS implementation with Rust.
 
 ## Setup
 
@@ -14,7 +14,7 @@ make
 # Run on QEMU
 make qemu
 # ... is equivalent to
-./qemu/make_and_run.sh \
+./qemu/make_and_run_image.sh \
     target/x86_64-unknown-uefi/debug/ors-loader.efi \
     target/x86_64-unknown-none-ors/debug/ors-kernel.elf
 ```
@@ -23,20 +23,27 @@ make qemu
 
 ors is based on [MikanOS](https://github.com/uchan-nos/mikanos) and [blog_os (Second Edition)](https://os.phil-opp.com/), and [xv6](https://github.com/mit-pdos/xv6-public).
 
-|                     | ors            | MikanOS        | blog_os          | xv6           |
-| ------------------- | -------------- | -------------- | ---------------- | ------------- |
-| Written in          | Rust           | C++            | Rust             | C             |
-| Boot by             | UEFI BIOS      | UEFI BIOS      | Legacy BIOS [^1] | Legacy BIOS   |
-| Screen Rendering    | GOP by UEFI    | GOP by UEFI    | VGA Text Mode    | VGA Text Mode |
-| Serial Port         | 16550 UART     | -              | 16650 UART       | 16650 UART    |
-| Hardware Interrupts | APIC           | APIC           | 8259 PIC         | APIC          |
-| Keyboard Support    | PS/2           | USB (xHCI)     | PS/2             | PS/2          |
-| Mouse Support       | -              | USB (xHCI)     | -                | -             |
-| Timers              | APIC + ACPI PM | APIC + ACPI PM | 8259 PIC         | APIC          |
-| Multitasking        | Preemptive     | Preemptive     | WIP [^2]         | Preemptive    |
+|                     | ors             | MikanOS        | blog_os          | xv6           |
+| ------------------- | --------------- | -------------- | ---------------- | ------------- |
+| Target              | x86_64          | x86_64         | x86_64           | x86 [^1]      |
+| Written in          | Rust            | C++            | Rust             | C             |
+| Boot by             | UEFI BIOS       | UEFI BIOS      | Legacy BIOS [^2] | Legacy BIOS   |
+| Screen Rendering    | GOP by UEFI     | GOP by UEFI    | VGA Text Mode    | VGA Text Mode |
+| Serial Port         | 16550 UART      | -              | 16650 UART       | 16650 UART    |
+| Hardware Interrupts | APIC            | APIC           | 8259 PIC         | APIC          |
+| Keyboard Support    | PS/2            | USB (xHCI)     | PS/2             | PS/2          |
+| Mouse Support       | -               | USB (xHCI)     | -                | -             |
+| Block Support       | VirtIO over PCI | - [^3]         | -                | IDE [^4]      |
+| Timers              | APIC + ACPI PM  | APIC + ACPI PM | 8259 PIC         | APIC          |
+| Multitasking        | Preemptive      | Preemptive     | WIP [^5]         | Preemptive    |
+| File System         | WIP             | FAT            | -                | original [^6] |
 
-[^1]: [UEFI is planned](https://github.com/phil-opp/blog_os/issues/349)
-[^2]: blog_os supports [Cooperative Multitasking](https://os.phil-opp.com/async-await/) at the moment
+[^1]: Maintaining the x86 version have stopped, and switched to the [RISC-V version](https://github.com/mit-pdos/xv6-riscv)
+[^2]: [UEFI is planned](https://github.com/phil-opp/blog_os/issues/349)
+[^3]: Only very limited reading (by UEFI Block I/O) is supported
+[^4]: [RISC-V version of xv6](https://github.com/mit-pdos/xv6-riscv) supports VirtIO over MMIO
+[^5]: blog_os supports [Cooperative Multitasking](https://os.phil-opp.com/async-await/) at the moment
+[^6]: Simpler but similar to modern UNIX file systems
 
 ## Roadmap
 
