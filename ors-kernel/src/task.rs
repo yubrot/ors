@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use core::cell::UnsafeCell;
 use core::cmp::Reverse;
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use log::trace;
 use spin::Once;
 
@@ -34,7 +34,7 @@ pub fn scheduler() -> &'static TaskScheduler {
 pub struct TaskScheduler {
     queue: Mutex<TaskQueue>,
     task_id_gen: AtomicU64,
-    wait_channel_gen: AtomicU64,
+    wait_channel_gen: AtomicI64,
 }
 
 impl TaskScheduler {
@@ -42,7 +42,7 @@ impl TaskScheduler {
         Self {
             queue: Mutex::new(TaskQueue::new()),
             task_id_gen: AtomicU64::new(0),
-            wait_channel_gen: AtomicU64::new(0),
+            wait_channel_gen: AtomicI64::new(-1),
         }
     }
 
@@ -51,7 +51,7 @@ impl TaskScheduler {
     }
 
     pub fn issue_wait_channel(&self) -> WaitChannel {
-        WaitChannel(self.wait_channel_gen.fetch_add(1, Ordering::SeqCst))
+        WaitChannel(self.wait_channel_gen.fetch_sub(1, Ordering::SeqCst))
     }
 
     pub fn add(
@@ -257,7 +257,19 @@ struct PendingId(u64);
 
 #[repr(transparent)]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]
-pub struct WaitChannel(u64);
+pub struct WaitChannel(i64);
+
+impl WaitChannel {
+    /// Create `WaitChannel` from a pointer.
+    /// The uniqueness of the resulting `WaitChannel` depends on the uniqueness of the pointer.
+    pub fn from_ptr<T>(ptr: *const T) -> Self {
+        Self::from_ptr_index(ptr, 0)
+    }
+
+    pub fn from_ptr_index<T>(ptr: *const T, index: u32) -> Self {
+        Self((ptr as i64 + index as i64) & i64::MAX)
+    }
+}
 
 #[repr(transparent)]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]

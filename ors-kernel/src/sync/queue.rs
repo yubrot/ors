@@ -1,21 +1,24 @@
-use crate::sync::lazy::Lazy;
 use crate::task;
 use heapless::mpmc::MpMcQueue;
 
 /// `heapless::mpmc::MpMcQueue` with task scheduler integration.
 pub struct Queue<T, const N: usize> {
     inner: MpMcQueue<T, N>,
-    empty_chan: Lazy<task::WaitChannel>,
-    full_chan: Lazy<task::WaitChannel>,
 }
 
 impl<T, const N: usize> Queue<T, N> {
     pub const fn new() -> Self {
         Self {
             inner: MpMcQueue::new(),
-            empty_chan: Lazy::new(|| task::scheduler().issue_wait_channel()),
-            full_chan: Lazy::new(|| task::scheduler().issue_wait_channel()),
         }
+    }
+
+    fn empty_chan(&self) -> task::WaitChannel {
+        task::WaitChannel::from_ptr_index(self, 0)
+    }
+
+    fn full_chan(&self) -> task::WaitChannel {
+        task::WaitChannel::from_ptr_index(self, 1)
     }
 
     pub fn enqueue(&self, mut item: T) {
@@ -26,7 +29,7 @@ impl<T, const N: usize> Queue<T, N> {
                         let ret = self.inner.enqueue(item);
                         let switch = match ret {
                             Ok(_) => None,
-                            Err(_) => Some(task::Switch::Blocked(*self.full_chan, None)),
+                            Err(_) => Some(task::Switch::Blocked(self.full_chan(), None)),
                         };
                         (switch, ret)
                     },
@@ -37,7 +40,7 @@ impl<T, const N: usize> Queue<T, N> {
                 Err(i) => item = i,
             }
         }
-        task::scheduler().release(*self.empty_chan);
+        task::scheduler().release(self.empty_chan());
     }
 
     pub fn enqueue_timeout(&self, item: T, timeout: usize) -> Result<(), T> {
@@ -49,7 +52,7 @@ impl<T, const N: usize> Queue<T, N> {
                         let ret = self.inner.enqueue(item);
                         let switch = match ret {
                             Ok(_) => None,
-                            Err(_) => Some(task::Switch::Blocked(*self.full_chan, Some(timeout))),
+                            Err(_) => Some(task::Switch::Blocked(self.full_chan(), Some(timeout))),
                         };
                         (switch, ret)
                     },
@@ -57,13 +60,13 @@ impl<T, const N: usize> Queue<T, N> {
                 )
             })
             .or_else(|item| self.inner.enqueue(item))?;
-        task::scheduler().release(*self.empty_chan);
+        task::scheduler().release(self.empty_chan());
         Ok(())
     }
 
     pub fn try_enqueue(&self, item: T) -> Result<(), T> {
         self.inner.enqueue(item)?;
-        task::scheduler().release(*self.empty_chan);
+        task::scheduler().release(self.empty_chan());
         Ok(())
     }
 
@@ -75,7 +78,7 @@ impl<T, const N: usize> Queue<T, N> {
                         let ret = self.inner.dequeue();
                         let switch = match ret {
                             Some(_) => None,
-                            None => Some(task::Switch::Blocked(*self.empty_chan, None)),
+                            None => Some(task::Switch::Blocked(self.empty_chan(), None)),
                         };
                         (switch, ret)
                     },
@@ -86,7 +89,7 @@ impl<T, const N: usize> Queue<T, N> {
                 None => {}
             }
         };
-        task::scheduler().release(*self.full_chan);
+        task::scheduler().release(self.full_chan());
         item
     }
 
@@ -100,7 +103,7 @@ impl<T, const N: usize> Queue<T, N> {
                         let ret = self.inner.dequeue();
                         let switch = match ret {
                             Some(_) => None,
-                            None => Some(task::Switch::Blocked(*self.empty_chan, Some(timeout))),
+                            None => Some(task::Switch::Blocked(self.empty_chan(), Some(timeout))),
                         };
                         (switch, ret)
                     },
@@ -108,13 +111,13 @@ impl<T, const N: usize> Queue<T, N> {
                 )
             })
             .or_else(|| self.inner.dequeue())?;
-        task::scheduler().release(*self.full_chan);
+        task::scheduler().release(self.full_chan());
         Some(item)
     }
 
     pub fn try_dequeue(&self) -> Option<T> {
         let value = self.inner.dequeue()?;
-        task::scheduler().release(*self.full_chan);
+        task::scheduler().release(self.full_chan());
         Some(value)
     }
 }
