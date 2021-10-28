@@ -444,12 +444,12 @@ impl MsiXTableEntry {
         assert!(lapic_id < 256);
         assert!(32 <= vector && vector <= 254);
 
-        const ADDRESS_SUFFIX: u32 = 0xfeee << 20;
+        const ADDRESS_SUFFIX: u32 = 0xfee << 20;
         let reserved_bits = self.message_address() & 0xff0;
-        self.set_message_address((lapic_id << 12) | ADDRESS_SUFFIX | reserved_bits); // TODO: RH | DM (See Intel SDM)
+        self.set_message_address((lapic_id << 12) | ADDRESS_SUFFIX | reserved_bits); // TODO: Redirection Hint | Destination Mode (See Intel SDM)
         const LEVEL: u32 = 1 << 15; // Level-triggered (vs edge-)
         let reserved_bits = self.message_data() & 0xffff3800;
-        self.set_message_data(vector | LEVEL | reserved_bits); // TODO: DM
+        self.set_message_data(vector | LEVEL | reserved_bits); // TODO: Delivery Mode (See Intel SDM)
         let reserved_bits = self.vector_control() & !1; // unmask
         self.set_vector_control(reserved_bits);
     }
@@ -460,7 +460,7 @@ impl MsiXTableEntry {
     }
 
     unsafe fn message_address(self) -> u32 {
-        // NOTE: upper 32bits of Message address are not used in x86_64
+        // NOTE: It seems upper 32bits of Message address are not used in x86_64
         ptr::read_volatile(self.ptr)
     }
 
