@@ -1,6 +1,6 @@
 [package]
 authors = ["yubrot <yubrot@gmail.com>"]
-edition = "2018"
+edition = "2021"
 name = "ors-loader"
 version = "0.1.0"
 
