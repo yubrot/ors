@@ -1,7 +1,7 @@
 use crate::context::{Context, EntryPoint};
 use crate::cpu::Cpu;
 use crate::interrupts::{ticks, Cli};
-use crate::sync::mutex::Mutex;
+use crate::sync::mutex::{Mutex, MutexGuard};
 use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BinaryHeap, VecDeque};
 use alloc::vec;
@@ -67,11 +67,15 @@ impl TaskScheduler {
         id
     }
 
-    pub fn switch<T>(&self, scheduling_op: impl FnOnce() -> (Option<Switch>, T)) -> T {
-        let cli = Cli::new();
+    pub fn switch<T>(
+        &self,
+        scheduling_op: impl FnOnce() -> (Option<Switch>, T),
+        other_cli: u32,
+    ) -> T {
+        let cli = Cli::new(); // (*1)
 
         let cpu_state = Cpu::current().state();
-        assert_eq!(cpu_state.lock().thread_state.ncli, 1); // To ensure that this context does not hold locks (*1)
+        assert_eq!(cpu_state.lock().thread_state.ncli, 1 + other_cli); // To ensure that this context does not hold locks (*1)
 
         let cpu_task = {
             // This assignment is necessary to avoid deadlocks
@@ -103,11 +107,22 @@ impl TaskScheduler {
     }
 
     pub fn r#yield(&self) {
-        self.switch(|| (Some(Switch::Yield), ()))
+        self.switch(|| (Some(Switch::Yield), ()), 0)
+    }
+
+    /// Atomically release MutexGuard and block on chan.
+    pub fn block<T>(&self, chan: WaitChannel, timeout: Option<usize>, guard: MutexGuard<'_, T>) {
+        self.switch(
+            move || {
+                drop(guard);
+                (Some(Switch::Blocked(chan, timeout)), ())
+            },
+            1,
+        )
     }
 
     pub fn sleep(&self, ticks: usize) {
-        self.switch(|| (Some(Switch::Sleep(ticks)), ()))
+        self.switch(|| (Some(Switch::Sleep(ticks)), ()), 0)
     }
 
     pub fn release(&self, chan: WaitChannel) {
