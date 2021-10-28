@@ -48,6 +48,7 @@ pub extern "sysv64" fn kernel_main2(fb: &RawFrameBuffer, mm: &MemoryMap, rsdp: u
     unsafe { interrupts::initialize() };
     task::initialize_scheduler();
     devices::pci::initialize_devices();
+    devices::virtio::block::initialize();
     devices::serial::default_port().init();
     console::initialize((*fb).into());
     task::scheduler().add(task::Priority::L1, shell::run, 0);

@@ -1,8 +1,9 @@
 use super::Configuration;
-use crate::paging::as_virt_addr;
+use crate::paging::{as_phys_addr, as_virt_addr};
 use crate::phys_memory::{frame_manager, Frame};
 use crate::x64;
 use alloc::vec::Vec;
+use core::mem;
 use core::ptr;
 use core::sync::atomic::{fence, Ordering};
 use derive_new::new;
@@ -241,6 +242,44 @@ pub struct Buffer<T> {
     pub write: bool,
     /// Data associated with the buffer. Given to the `VirtQueue::collect` callback.
     pub associated_data: T,
+}
+
+impl<T> Buffer<T> {
+    pub fn from_ref<D>(d: &D, associated_data: T) -> Option<Self> {
+        Some(Self::new(
+            as_phys_addr(x64::VirtAddr::from_ptr(d))?,
+            mem::size_of::<D>(),
+            false,
+            associated_data,
+        ))
+    }
+
+    pub fn from_ref_mut<D>(d: &mut D, associated_data: T) -> Option<Self> {
+        Some(Self::new(
+            as_phys_addr(x64::VirtAddr::from_ptr(d))?,
+            mem::size_of::<D>(),
+            true,
+            associated_data,
+        ))
+    }
+
+    pub fn from_bytes(bytes: &[u8], associated_data: T) -> Option<Self> {
+        Some(Self::new(
+            as_phys_addr(x64::VirtAddr::from_ptr(&bytes[0]))?,
+            bytes.len(),
+            false,
+            associated_data,
+        ))
+    }
+
+    pub fn from_bytes_mut(bytes: &mut [u8], associated_data: T) -> Option<Self> {
+        Some(Self::new(
+            as_phys_addr(x64::VirtAddr::from_ptr(&mut bytes[0]))?,
+            bytes.len(),
+            true,
+            associated_data,
+        ))
+    }
 }
 
 // See VirtIO specification

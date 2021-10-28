@@ -1,8 +1,6 @@
 use crate::devices::pci;
 use crate::x64;
 
-// https://docs.oasis-open.org/virtio/virtio/v1.1/virtio-v1.1.pdf
-
 // const DEVICE_STATUS_FAILED: u8 = 128; // something went wrong in the guest
 const DEVICE_STATUS_ACKNOWLEDGE: u8 = 1; // the guest OS has found the device and recognized it
 const DEVICE_STATUS_DRIVER: u8 = 2; // the guest OS knows how to drive the device
@@ -90,9 +88,8 @@ impl Configuration {
         self.read(0x0c)
     }
 
-    pub unsafe fn set_queue_size(self, value: u32) {
-        self.write(0x0c, value)
-    }
+    // On Legacy Interface,
+    // > There was no mechanism to negotiate the queue size.
 
     pub unsafe fn queue_select(self) -> u16 {
         self.read(0x0e)

@@ -1,7 +1,6 @@
 use crate::acpi;
 use crate::console;
 use crate::cpu::Cpu;
-use crate::devices;
 use crate::segmentation::DOUBLE_FAULT_IST_INDEX;
 use crate::task;
 use crate::x64;
@@ -232,15 +231,19 @@ extern "x86-interrupt" fn kbd_handler(_stack_frame: x64::InterruptStackFrame) {
 }
 
 extern "x86-interrupt" fn com1_handler(_stack_frame: x64::InterruptStackFrame) {
-    let v = devices::serial::default_port().receive();
+    use crate::devices::serial::default_port;
+
+    let v = default_port().receive();
     console::accept_raw_input(console::RawInput::Com1(v));
     unsafe { LAPIC.set_eoi(0) };
 }
 
-extern "x86-interrupt" fn virtio_block_handler<const N: u32>(
+extern "x86-interrupt" fn virtio_block_handler<const N: usize>(
     _stack_frame: x64::InterruptStackFrame,
 ) {
-    sprintln!("virtio_block_handler {}", N);
+    use crate::devices::virtio::block;
+
+    block::list()[N].collect();
     unsafe { LAPIC.set_eoi(0) };
 }
 
