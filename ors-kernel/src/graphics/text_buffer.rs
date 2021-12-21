@@ -185,7 +185,7 @@ impl Line {
 
     fn render(&mut self, font: &mut MonospaceFont) {
         if let Some((a, b)) = self.render_diff {
-            for (i, c) in self.chars.iter().copied().enumerate().skip(a).take(b - a) {
+            for (i, c) in self.chars.iter().copied().enumerate().take(b).skip(a) {
                 let ofs_x = (i * font.unit_width() as usize) as i32;
                 c.render_to(&mut self.buf, ofs_x, 0, font);
             }
