@@ -2,6 +2,7 @@
 
 use crate::console::{input_queue, Input};
 use crate::devices;
+use crate::fs::{fat, VirtIOBlockVolume};
 use crate::interrupts::{ticks, TIMER_FREQ};
 use crate::phys_memory::frame_manager;
 use alloc::string::String;
@@ -95,6 +96,18 @@ fn execute_command(command_buf: &str) {
                     PrettySize(available * 4096),
                     PrettySize(total * 4096)
                 );
+            }
+        }
+        "read" => {
+            use devices::virtio::block;
+
+            match fat::FileSystem::new(VirtIOBlockVolume::from(&block::list()[0])) {
+                Ok(fs) => {
+                    for entry in fs.root_dir().entries() {
+                        kprintln!("{}", entry.name());
+                    }
+                }
+                Err(e) => kprintln!("error = {:?}", e),
             }
         }
         "lspci" => {

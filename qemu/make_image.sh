@@ -26,6 +26,7 @@ mkdir -p $MOUNT_POINT
 sudo mount -o loop $DISK_IMG $MOUNT_POINT
 sudo mkdir -p $MOUNT_POINT/EFI/BOOT
 sudo cp $BOOTLOADER_EFI $MOUNT_POINT/EFI/BOOT/BOOTX64.EFI
+echo "Hello FAT32!" | sudo tee $MOUNT_POINT/Hello_FileSystem
 if [ "$KERNEL_ELF" != "" ]; then
   sudo cp $KERNEL_ELF $MOUNT_POINT/ors-kernel.elf
 fi

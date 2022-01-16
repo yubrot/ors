@@ -20,6 +20,7 @@ pub mod console;
 pub mod context;
 pub mod cpu;
 pub mod devices;
+pub mod fs;
 pub mod graphics;
 pub mod interrupts;
 pub mod logger;
