@@ -9,7 +9,10 @@ use uefi::proto::media::file::{
 
 pub fn open_root_dir(image: Handle, bs: &BootServices) -> Directory {
     let sfs = bs.get_image_file_system(image).unwrap_success();
-    unsafe { &mut *sfs.get() }.open_volume().unwrap_success()
+    // NOTE: Is it safe? Internally BootServices::get_image_file_system does something similar.
+    unsafe { &mut *sfs.interface.get() }
+        .open_volume()
+        .unwrap_success()
 }
 
 pub fn create(dir: &mut Directory, filename: &str, create_dir: bool) -> FileType {

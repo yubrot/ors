@@ -65,7 +65,7 @@ fn get_rsdp(st: &SystemTable<Boot>) -> u64 {
 
 fn dump_memory_map(path: &str, image: Handle, st: &SystemTable<Boot>) {
     let enough_mmap_size =
-        st.boot_services().memory_map_size() + 8 * mem::size_of::<MemoryDescriptor>();
+        st.boot_services().memory_map_size().map_size + 8 * mem::size_of::<MemoryDescriptor>();
     let mut mmap_buf = vec![0; enough_mmap_size];
     let (_, descriptors) = st
         .boot_services()
@@ -158,7 +158,7 @@ fn exit_boot_services(
     st: SystemTable<Boot>,
 ) -> (SystemTable<Runtime>, memory_map::MemoryMap) {
     let enough_mmap_size =
-        st.boot_services().memory_map_size() + 8 * mem::size_of::<MemoryDescriptor>();
+        st.boot_services().memory_map_size().map_size + 8 * mem::size_of::<MemoryDescriptor>();
     let mmap_buf = vec![0; enough_mmap_size].leak();
     let mut descriptors = Vec::with_capacity(enough_mmap_size);
     let (st, raw_descriptors) = st
