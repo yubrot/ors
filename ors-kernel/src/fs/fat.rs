@@ -1,6 +1,6 @@
 //! FAT File System implementation (work in progress)
 
-use super::{Error as VolumeError, Volume};
+use super::volume::{Volume, VolumeError};
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
