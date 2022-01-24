@@ -1,9 +1,10 @@
 //! FAT File System implementation (work in progress)
 
-use super::volume::{Volume, VolumeError};
+use super::volume::{Sector, Volume, VolumeError};
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::fmt;
 use log::trace;
 
 // TODO:
@@ -39,7 +40,7 @@ impl<V: Volume> FileSystem<V> {
         let sector_size = volume.sector_size();
         let mut buf = vec![0; sector_size];
 
-        volume.read(0, buf.as_mut())?;
+        volume.read(Sector::from_index(0), buf.as_mut())?;
         let bs = BootSector::try_from(buf.as_ref())?;
 
         if bs.sector_size() != sector_size {
@@ -55,31 +56,31 @@ impl<V: Volume> FileSystem<V> {
     pub fn root_dir(&self) -> Dir<V> {
         Dir {
             fs: self,
-            cluster: self.bs.bpb_root_clus,
+            cluster: self.bs.root_dir_cluster(),
         }
     }
 
-    fn read_fat_entry(&self, n: u32, buf: &mut [u8]) -> Result<FatEntry, Error> {
+    fn read_fat_entry(&self, n: Cluster, buf: &mut [u8]) -> Result<FatEntry, Error> {
         debug_assert!(self.bs.sector_size() <= buf.len());
         let (sector, offset) = self.bs.fat_entry_location(n);
         self.volume
-            .read(sector as usize, &mut buf[0..self.bs.sector_size()])?;
+            .read(sector, &mut buf[0..self.bs.sector_size()])?;
         Ok(FatEntry::from(u32::from_le_bytes(
-            buf.fixed_slice::<4>(offset as usize),
+            buf.array::<4>(offset as usize),
         )))
     }
 
-    fn read_data(&self, n: u32, buf: &mut [u8]) -> Result<(), Error> {
-        debug_assert_eq!(self.bs.cluster_size_in_bytes(), buf.len());
-        let sector = self.bs.data_location(n);
-        Ok(self.volume.read(sector as usize, buf)?)
+    fn read_data(&self, n: Cluster, buf: &mut [u8]) -> Result<(), Error> {
+        debug_assert_eq!(self.bs.cluster_size() * self.bs.sector_size(), buf.len());
+        let sector = self.bs.cluster_location(n);
+        Ok(self.volume.read(sector, buf)?)
     }
 }
 
 #[derive(Debug)]
 pub struct Dir<'a, V> {
     fs: &'a FileSystem<V>,
-    cluster: u32,
+    cluster: Cluster,
 }
 
 impl<'a, V: Volume> Dir<'a, V> {
@@ -196,12 +197,12 @@ struct RawDirIter<'a, V> {
 }
 
 impl<'a, V: Volume> Iterator for RawDirIter<'a, V> {
-    type Item = (u32, usize, RawDirEntry);
+    type Item = (Cluster, usize, RawDirEntry);
 
     fn next(&mut self) -> Option<Self::Item> {
         match core::mem::replace(&mut self.cursor, RawDirCursor::End) {
             RawDirCursor::Init(cluster) => {
-                let buf = vec![0; self.fs.bs.cluster_size_in_bytes()];
+                let buf = vec![0; self.fs.bs.cluster_size() * self.fs.bs.sector_size()];
                 self.cursor = RawDirCursor::Start(cluster, buf);
                 self.next()
             }
@@ -239,9 +240,7 @@ impl<'a, V: Volume> Iterator for RawDirIter<'a, V> {
             }
             RawDirCursor::Mid(cluster, mut buf, _) => {
                 match self.fs.read_fat_entry(cluster, buf.as_mut()) {
-                    Ok(FatEntry::Used {
-                        next: Some(cluster),
-                    }) => {
+                    Ok(FatEntry::Used(Some(cluster))) => {
                         self.cursor = RawDirCursor::Start(cluster, buf);
                         self.next()
                     }
@@ -259,9 +258,9 @@ impl<'a, V: Volume> Iterator for RawDirIter<'a, V> {
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 enum RawDirCursor {
-    Init(u32),
-    Start(u32, Vec<u8>),
-    Mid(u32, Vec<u8>, usize),
+    Init(Cluster),
+    Start(Cluster, Vec<u8>),
+    Mid(Cluster, Vec<u8>, usize),
     End,
 }
 
@@ -328,86 +327,109 @@ struct BootSector {
 }
 
 impl BootSector {
+    pub fn volume_id(&self) -> u32 {
+        self.vol_id
+    }
+
+    pub fn volume_label(&self) -> [u8; 11] {
+        self.vol_lab
+    }
+
     /// Sector size in bytes.
-    fn sector_size(&self) -> usize {
+    pub fn sector_size(&self) -> usize {
         self.bpb_byts_per_sec as usize
     }
 
     /// Total number of sectors.
-    fn total_sector_count(&self) -> u32 {
+    pub fn total_sector_count(&self) -> usize {
         debug_assert_eq!(self._bpb_tot_sec_16, 0);
-        self.bpb_tot_sec_32
-    }
-
-    /// Cluster size in sectors.
-    fn cluster_size(&self) -> u32 {
-        self.bpb_sec_per_clus as u32
-    }
-
-    /// Cluster size in bytes.
-    fn cluster_size_in_bytes(&self) -> usize {
-        self.sector_size() * self.cluster_size() as usize
+        self.bpb_tot_sec_32 as usize
     }
 
     /// FAT size in sectors.
-    fn fat_size(&self) -> u32 {
+    pub fn fat_size(&self) -> usize {
         debug_assert_eq!(self._bpb_fat_sz_16, 0);
-        self.bpb_fat_sz_32
+        self.bpb_fat_sz_32 as usize
     }
 
     // A FAT volume consists of
     // Reserved area | FAT area | Root dir area (for FAT12/16) | Data area
 
     /// Fat area start sector.
-    fn fat_area_start(&self) -> u32 {
-        self.bpb_rsvd_sec_cnt as u32
+    pub fn fat_area_start(&self) -> Sector {
+        Sector::from_index(self.bpb_rsvd_sec_cnt as usize)
     }
 
     /// FAT area size in sectors.
-    fn fat_area_size(&self) -> u32 {
-        self.fat_size() * self.bpb_num_fats as u32
+    pub fn fat_area_size(&self) -> usize {
+        self.fat_size() * self.bpb_num_fats as usize
     }
 
     /// Root dir area start sector.
-    fn root_dir_area_start(&self) -> u32 {
-        self.fat_area_start() + self.fat_area_size()
+    pub fn root_dir_area_start(&self) -> Sector {
+        self.fat_area_start().offset(self.fat_area_size())
     }
 
     /// Root dir area size in sectors.
-    fn root_dir_area_size(&self) -> u32 {
+    pub fn root_dir_area_size(&self) -> usize {
         debug_assert_eq!(self._bpb_root_ent_cnt, 0);
         0
-        // (DirEntry::SIZE as u32 * self._bpb_root_ent_cnt as u32 + self.bpb_byts_per_sec as u32 - 1)
-        //     / self.bpb_byts_per_sec as u32
+        // use super::dir_entry::DirEntry;
+        // let sector_size = self.sector_size();
+        // (DirEntry::SIZE * self._bpb_root_ent_cnt as usize + sector_size - 1) / sector_size
     }
 
     /// Data area start sector.
-    fn data_area_start(&self) -> u32 {
-        self.root_dir_area_start() + self.root_dir_area_size()
+    pub fn data_area_start(&self) -> Sector {
+        self.root_dir_area_start().offset(self.root_dir_area_size())
     }
 
     /// Data area size in sectors.
-    fn data_area_size(&self) -> u32 {
-        self.total_sector_count() - self.data_area_start()
+    pub fn data_area_size(&self) -> usize {
+        self.total_sector_count() - self.data_area_start().index()
     }
 
-    /// Get the location of the FAT entry corresponding to the given cluster number, in sectors and byte-offset.
+    /// Cluster size in sectors.
+    pub fn cluster_size(&self) -> usize {
+        self.bpb_sec_per_clus as usize
+    }
+
+    /// Number of available clusters.
+    pub fn cluster_count(&self) -> usize {
+        self.data_area_size() / self.cluster_size()
+    }
+
+    pub(super) fn is_cluster_available(&self, n: Cluster) -> bool {
+        // Cluster numbers start at 2, thus the maximum cluster number is `cluster_count() + 1`.
+        2 <= n.index() && n.index() <= self.cluster_count() + 1
+    }
+
+    /// Get the location of the FAT entry corresponding to the given cluster number.
     ///
-    /// In FAT32, FAT is an array of 32-bit FAT entries.
+    /// In FAT32, FAT (File Allocation Table) is an array of 32-bit FAT entries.
     /// Each FAT entry has a 1:1 correspondence with each cluster,
     /// and the value of the FAT entry indicates the status of the corresponding cluster.
-    /// Notice that FAT[0] and FAT[1] are reserved, and correspondingly, the valid cluster number is also 2-origin.
+    /// Notice that FAT[0] and FAT[1] are reserved, and correspondingly, cluster numbers also start at 2.
     /// It should also be noted that in FAT32, the upper 4 bits of the FAT entry are reserved.
-    fn fat_entry_location(&self, n: u32) -> (u32, u32) {
-        let sector = self.fat_area_start() + (n * 4 / self.cluster_size());
-        let offset = (n * 4) % self.cluster_size();
+    pub(super) fn fat_entry_location(&self, n: Cluster) -> (Sector, usize) {
+        debug_assert!(self.is_cluster_available(n));
+        let bytes_offset = n.index() * 4; // 32-bit -> 4bytes
+        let sector = self
+            .fat_area_start()
+            .offset(bytes_offset / self.sector_size());
+        let offset = bytes_offset % self.sector_size();
         (sector, offset)
     }
 
-    /// Get the location of the data corresponding to the given cluster number, in sectors.
-    fn data_location(&self, n: u32) -> u32 {
-        debug_assert!(2 <= n, "Cluster number is 2-origin");
-        self.data_area_start() + (n - 2) * self.cluster_size()
+    /// Get the location of the data corresponding to the given cluster number.
+    pub(super) fn cluster_location(&self, n: Cluster) -> Sector {
+        debug_assert!(self.is_cluster_available(n));
+        self.data_area_start()
+            .offset((n.index() - 2) * self.cluster_size())
+    }
+
+    pub(super) fn root_dir_cluster(&self) -> Cluster {
+        Cluster::from_index(self.bpb_root_clus as usize)
     }
 }
 
@@ -419,20 +441,20 @@ impl TryFrom<&'_ [u8]> for BootSector {
             Err(Error::BootSignatureMismatch)?;
         }
 
-        let _jmp_boot = buf.fixed_slice::<3>(0);
-        let _oem_name = buf.fixed_slice::<8>(3);
-        let bpb_byts_per_sec = u16::from_le_bytes(buf.fixed_slice::<2>(11));
+        let _jmp_boot = buf.array::<3>(0);
+        let _oem_name = buf.array::<8>(3);
+        let bpb_byts_per_sec = u16::from_le_bytes(buf.array::<2>(11));
         let bpb_sec_per_clus = buf[13];
-        let bpb_rsvd_sec_cnt = u16::from_le_bytes(buf.fixed_slice::<2>(14));
+        let bpb_rsvd_sec_cnt = u16::from_le_bytes(buf.array::<2>(14));
         let bpb_num_fats = buf[16];
-        let _bpb_root_ent_cnt = u16::from_le_bytes(buf.fixed_slice::<2>(17));
-        let _bpb_tot_sec_16 = u16::from_le_bytes(buf.fixed_slice::<2>(19));
+        let _bpb_root_ent_cnt = u16::from_le_bytes(buf.array::<2>(17));
+        let _bpb_tot_sec_16 = u16::from_le_bytes(buf.array::<2>(19));
         let _bpb_media = buf[21];
-        let _bpb_fat_sz_16 = u16::from_le_bytes(buf.fixed_slice::<2>(22));
-        let _bpb_sec_per_trk = u16::from_le_bytes(buf.fixed_slice::<2>(24));
-        let _bpb_num_heads = u16::from_le_bytes(buf.fixed_slice::<2>(26));
-        let _bpb_hidd_sec = u32::from_le_bytes(buf.fixed_slice::<4>(28));
-        let bpb_tot_sec_32 = u32::from_le_bytes(buf.fixed_slice::<4>(32));
+        let _bpb_fat_sz_16 = u16::from_le_bytes(buf.array::<2>(22));
+        let _bpb_sec_per_trk = u16::from_le_bytes(buf.array::<2>(24));
+        let _bpb_num_heads = u16::from_le_bytes(buf.array::<2>(26));
+        let _bpb_hidd_sec = u32::from_le_bytes(buf.array::<4>(28));
+        let bpb_tot_sec_32 = u32::from_le_bytes(buf.array::<4>(32));
 
         if !matches!(_jmp_boot, [0xeb, _, 0x90] | [0xe9, _, _]) {
             Err(Error::BrokenBootSector("JmpBoot"))?;
@@ -447,19 +469,19 @@ impl TryFrom<&'_ [u8]> for BootSector {
             Err(Error::Unsupported("FAT12/16"))?;
         }
 
-        let bpb_fat_sz_32 = u32::from_le_bytes(buf.fixed_slice::<4>(36));
-        let _bpb_ext_flags = u16::from_le_bytes(buf.fixed_slice::<2>(40));
-        let _bpb_fs_ver = u16::from_le_bytes(buf.fixed_slice::<2>(42));
-        let bpb_root_clus = u32::from_le_bytes(buf.fixed_slice::<4>(44));
-        let _bpb_fs_info = u16::from_le_bytes(buf.fixed_slice::<2>(48));
-        let bpb_bk_boot_sec = u16::from_le_bytes(buf.fixed_slice::<2>(50));
-        let _bpb_reserved = buf.fixed_slice::<12>(52);
+        let bpb_fat_sz_32 = u32::from_le_bytes(buf.array::<4>(36));
+        let _bpb_ext_flags = u16::from_le_bytes(buf.array::<2>(40));
+        let _bpb_fs_ver = u16::from_le_bytes(buf.array::<2>(42));
+        let bpb_root_clus = u32::from_le_bytes(buf.array::<4>(44));
+        let _bpb_fs_info = u16::from_le_bytes(buf.array::<2>(48));
+        let bpb_bk_boot_sec = u16::from_le_bytes(buf.array::<2>(50));
+        let _bpb_reserved = buf.array::<12>(52);
         let _drv_num = buf[64];
         let _reserved = buf[65];
         let _boot_sig = buf[66];
-        let vol_id = u32::from_le_bytes(buf.fixed_slice::<4>(67));
-        let vol_lab = buf.fixed_slice::<11>(71);
-        let _fil_sys_type = buf.fixed_slice::<8>(82);
+        let vol_id = u32::from_le_bytes(buf.array::<4>(67));
+        let vol_lab = buf.array::<11>(71);
+        let _fil_sys_type = buf.array::<8>(82);
 
         if _bpb_fs_ver != 0x0000 {
             Err(Error::Unsupported("FSVer"))?;
@@ -508,7 +530,7 @@ impl TryFrom<&'_ [u8]> for BootSector {
 enum FatEntry {
     Unused,
     Reserved,
-    Used { next: Option<u32> },
+    Used(Option<Cluster>),
     Bad,
 }
 
@@ -517,9 +539,9 @@ impl From<u32> for FatEntry {
         match value & 0x0fffffff {
             0 => Self::Unused,
             1 => Self::Reserved,
-            0x00000002..=0x0ffffff6 => Self::Used { next: Some(value) },
+            0x00000002..=0x0ffffff6 => Self::Used(Some(Cluster::from_index(value as usize))),
             0x0ffffff7 => Self::Bad,
-            0x0ffffff8..=0x0fffffff => Self::Used { next: None },
+            0x0ffffff8..=0x0fffffff => Self::Used(None),
             0x10000000..=0xffffffff => unreachable!(),
         }
     }
@@ -628,18 +650,18 @@ impl TryFrom<&'_ [u8]> for SfnEntry {
             Err("Directory entry must be 32 bytes long")?;
         }
 
-        let name = buf.fixed_slice::<11>(0);
+        let name = buf.array::<11>(0);
         let attr = buf[11];
         let nt_res = buf[12];
         let crt_time_tenth = buf[13];
-        let crt_time = u16::from_le_bytes(buf.fixed_slice::<2>(14));
-        let crt_date = u16::from_le_bytes(buf.fixed_slice::<2>(16));
-        let lst_acc_date = u16::from_le_bytes(buf.fixed_slice::<2>(18));
-        let fst_clus_hi = u16::from_le_bytes(buf.fixed_slice::<2>(20));
-        let wrt_time = u16::from_le_bytes(buf.fixed_slice::<2>(22));
-        let wrt_date = u16::from_le_bytes(buf.fixed_slice::<2>(24));
-        let fst_clus_lo = u16::from_le_bytes(buf.fixed_slice::<2>(26));
-        let file_size = u32::from_le_bytes(buf.fixed_slice::<4>(28));
+        let crt_time = u16::from_le_bytes(buf.array::<2>(14));
+        let crt_date = u16::from_le_bytes(buf.array::<2>(16));
+        let lst_acc_date = u16::from_le_bytes(buf.array::<2>(18));
+        let fst_clus_hi = u16::from_le_bytes(buf.array::<2>(20));
+        let wrt_time = u16::from_le_bytes(buf.array::<2>(22));
+        let wrt_date = u16::from_le_bytes(buf.array::<2>(24));
+        let fst_clus_lo = u16::from_le_bytes(buf.array::<2>(26));
+        let file_size = u32::from_le_bytes(buf.array::<4>(28));
 
         if (attr & 0xc0) != 0 {
             Err("Invalid Attr")?;
@@ -684,9 +706,9 @@ impl LfnEntry {
     fn put_name_parts_into(&self, buf: &mut [u16]) {
         for i in 0..13 {
             buf[i] = u16::from_le_bytes(match i {
-                0..=4 => self.name1.fixed_slice::<2>(i * 2),
-                5..=10 => self.name2.fixed_slice::<2>((i - 5) * 2),
-                11..=12 => self.name3.fixed_slice::<2>((i - 11) * 2),
+                0..=4 => self.name1.array::<2>(i * 2),
+                5..=10 => self.name2.array::<2>((i - 5) * 2),
+                11..=12 => self.name3.array::<2>((i - 11) * 2),
                 _ => unreachable!(),
             });
         }
@@ -702,13 +724,13 @@ impl TryFrom<&'_ [u8]> for LfnEntry {
         }
 
         let ord = buf[0];
-        let name1 = buf.fixed_slice::<10>(1);
+        let name1 = buf.array::<10>(1);
         let attr = buf[11];
         let ty = buf[12];
         let chksum = buf[13];
-        let name2 = buf.fixed_slice::<12>(14);
-        let _fst_clus_lo = u16::from_le_bytes(buf.fixed_slice::<2>(26));
-        let name3 = buf.fixed_slice::<4>(28);
+        let name2 = buf.array::<12>(14);
+        let _fst_clus_lo = u16::from_le_bytes(buf.array::<2>(26));
+        let name3 = buf.array::<4>(28);
 
         if (attr & 0xc0) != 0 {
             Err("Invalid Attr")?;
@@ -730,12 +752,35 @@ impl TryFrom<&'_ [u8]> for LfnEntry {
     }
 }
 
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]
+pub(super) struct Cluster(usize);
+
+impl Cluster {
+    pub(super) fn from_index(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub(super) fn index(self) -> usize {
+        self.0
+    }
+
+    pub(super) fn offset(self, s: usize) -> Self {
+        Self(self.0 + s)
+    }
+}
+
+impl fmt::Display for Cluster {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 trait SliceExt {
-    fn fixed_slice<const N: usize>(&self, offset: usize) -> [u8; N];
+    fn array<const N: usize>(&self, offset: usize) -> [u8; N];
 }
 
 impl SliceExt for [u8] {
-    fn fixed_slice<const N: usize>(&self, offset: usize) -> [u8; N] {
+    fn array<const N: usize>(&self, offset: usize) -> [u8; N] {
         let mut ret = [0; N];
         ret.copy_from_slice(&self[offset..offset + N]);
         ret
