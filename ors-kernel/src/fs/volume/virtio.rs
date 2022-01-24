@@ -1,10 +1,10 @@
 mod virtio {
     pub use crate::devices::virtio::block::*;
 }
-use super::{Sector, Volume, VolumeError};
+use super::{Sector, Volume, VolumeError, VolumeErrorKind};
 use derive_new::new;
 
-impl From<virtio::Error> for VolumeError {
+impl From<virtio::Error> for VolumeErrorKind {
     fn from(e: virtio::Error) -> Self {
         match e {
             virtio::Error::Io => Self::Io,
@@ -28,10 +28,14 @@ impl Volume for VirtIOBlockVolume {
     }
 
     fn read(&self, sector: Sector, buf: &mut [u8]) -> Result<(), VolumeError> {
-        Ok(self.0.read(sector.index() as u64, buf)?)
+        self.0
+            .read(sector.index() as u64, buf)
+            .map_err(|k| VolumeError::new(sector, k.into()))
     }
 
     fn write(&self, sector: Sector, buf: &[u8]) -> Result<(), VolumeError> {
-        Ok(self.0.write(sector.index() as u64, buf)?)
+        self.0
+            .write(sector.index() as u64, buf)
+            .map_err(|k| VolumeError::new(sector, k.into()))
     }
 }

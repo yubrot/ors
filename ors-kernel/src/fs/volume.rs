@@ -1,4 +1,5 @@
 use core::fmt;
+use derive_new::new;
 
 pub mod virtio;
 
@@ -35,8 +36,25 @@ pub trait Volume {
 }
 
 /// Error during volume operations.
+#[derive(PartialEq, Eq, Debug, Clone, Copy, new)]
+pub struct VolumeError {
+    pub sector: Sector,
+    pub kind: VolumeErrorKind,
+}
+
+impl fmt::Display for VolumeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.kind {
+            VolumeErrorKind::Io => write!(f, "I/O error")?,
+            VolumeErrorKind::OutOfRange => write!(f, "Out of range")?,
+            VolumeErrorKind::Unknown => write!(f, "Unknown error")?,
+        }
+        write!(f, " at sector={}", self.sector)
+    }
+}
+
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
-pub enum VolumeError {
+pub enum VolumeErrorKind {
     Io,
     OutOfRange,
     Unknown,
