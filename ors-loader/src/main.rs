@@ -12,7 +12,7 @@ mod fs;
 use alloc::vec::Vec;
 use core::{mem, slice};
 use goblin::elf;
-use log::info;
+use log::trace;
 use ors_common::{frame_buffer, memory_map};
 use uefi::prelude::*;
 use uefi::proto::console::gop::{GraphicsOutput, PixelFormat};
@@ -29,23 +29,23 @@ fn efi_main(image: Handle, mut st: SystemTable<Boot>) -> Status {
 
     st.stdout().reset(false).unwrap_success();
 
-    info!("dump_memory_map");
+    trace!("dump_memory_map");
     dump_memory_map("memmap", image, &st);
 
-    info!("load_kernel");
+    trace!("load_kernel");
     let entry_point_addr = load_kernel("ors-kernel.elf", image, &st);
 
-    info!("entry_point_addr = 0x{:x}", entry_point_addr);
+    trace!("entry_point_addr = 0x{:x}", entry_point_addr);
     let entry_point: extern "sysv64" fn(&frame_buffer::FrameBuffer, &memory_map::MemoryMap, u64) =
         unsafe { mem::transmute(entry_point_addr) };
 
-    info!("get_frame_buffer");
+    trace!("get_frame_buffer");
     let frame_buffer = get_frame_buffer(st.boot_services());
 
-    info!("get_rsdp");
+    trace!("get_rsdp");
     let rsdp = get_rsdp(&st);
 
-    info!("exit_boot_services");
+    trace!("exit_boot_services");
     let (_st, memory_map) = exit_boot_services(image, st);
 
     entry_point(&frame_buffer, &memory_map, rsdp);

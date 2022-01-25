@@ -91,6 +91,7 @@ impl TaskScheduler {
             let (switch, ret) = scheduling_op();
             let task = match switch {
                 Some(switch) => queue_lock.dequeue(cpu_task, switch),
+                // Task switching is cancelled, but we need to restore cpu_state.running_task
                 None => cpu_task,
             };
             (task, ret)
