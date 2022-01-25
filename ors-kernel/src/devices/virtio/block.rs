@@ -2,7 +2,7 @@ use super::{Buffer, Configuration, VirtQueue};
 use crate::cpu::Cpu;
 use crate::devices::pci;
 use crate::interrupts::virtio_block_irq;
-use crate::sync::mutex::Mutex;
+use crate::sync::spin::Spin;
 use crate::task;
 use core::mem;
 use core::sync::atomic::{fence, Ordering};
@@ -29,7 +29,7 @@ pub fn list() -> &'static Vec<Block, 8> {
 #[derive(Debug)]
 pub struct Block {
     configuration: Configuration,
-    requestq: Mutex<VirtQueue<Option<task::WaitChannel>>>,
+    requestq: Spin<VirtQueue<Option<task::WaitChannel>>>,
 }
 
 impl Block {
@@ -72,7 +72,7 @@ impl Block {
 
         let configuration = Configuration::from_pci_device(device)?;
         configuration.initialize(Self::negotiate)?;
-        let requestq = Mutex::new(VirtQueue::new(configuration, 0, Some(0))?);
+        let requestq = Spin::new(VirtQueue::new(configuration, 0, Some(0))?);
         configuration.set_driver_ok();
 
         Ok(Self {

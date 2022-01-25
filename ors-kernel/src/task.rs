@@ -1,7 +1,7 @@
 use crate::context::{Context, EntryPoint};
 use crate::cpu::Cpu;
 use crate::interrupts::{ticks, Cli};
-use crate::sync::mutex::{Mutex, MutexGuard};
+use crate::sync::spin::{Spin, SpinGuard};
 use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BinaryHeap, VecDeque};
 use alloc::vec;
@@ -32,7 +32,7 @@ pub fn scheduler() -> &'static TaskScheduler {
 
 #[derive(Debug)]
 pub struct TaskScheduler {
-    queue: Mutex<TaskQueue>,
+    queue: Spin<TaskQueue>,
     task_id_gen: AtomicU64,
     wait_channel_gen: AtomicI64,
 }
@@ -40,7 +40,7 @@ pub struct TaskScheduler {
 impl TaskScheduler {
     pub fn new() -> Self {
         Self {
-            queue: Mutex::new(TaskQueue::new()),
+            queue: Spin::new(TaskQueue::new()),
             task_id_gen: AtomicU64::new(0),
             wait_channel_gen: AtomicI64::new(-1),
         }
@@ -112,7 +112,7 @@ impl TaskScheduler {
     }
 
     /// Atomically release MutexGuard and block on chan.
-    pub fn block<T>(&self, chan: WaitChannel, timeout: Option<usize>, guard: MutexGuard<'_, T>) {
+    pub fn block<T>(&self, chan: WaitChannel, timeout: Option<usize>, guard: SpinGuard<'_, T>) {
         self.switch(
             move || {
                 drop(guard);

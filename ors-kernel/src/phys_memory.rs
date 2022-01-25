@@ -1,14 +1,14 @@
 // A frame represents a memory section on a physical address,
 // and does not manage the usage of linear (virtual) addresses.
 
-use crate::sync::mutex::{Mutex, MutexGuard};
+use crate::sync::spin::{Spin, SpinGuard};
 use crate::x64;
 use core::mem;
 use log::trace;
 
-static FRAME_MANAGER: Mutex<BitmapFrameManager> = Mutex::new(BitmapFrameManager::new());
+static FRAME_MANAGER: Spin<BitmapFrameManager> = Spin::new(BitmapFrameManager::new());
 
-pub fn frame_manager() -> MutexGuard<'static, BitmapFrameManager> {
+pub fn frame_manager() -> SpinGuard<'static, BitmapFrameManager> {
     FRAME_MANAGER.lock()
 }
 

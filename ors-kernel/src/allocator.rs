@@ -1,6 +1,6 @@
 use crate::paging::{as_phys_addr, as_virt_addr};
 use crate::phys_memory::{frame_manager, Frame};
-use crate::sync::mutex::Mutex;
+use crate::sync::spin::Spin;
 use crate::x64;
 use alloc::alloc::{GlobalAlloc, Layout};
 use core::ptr;
@@ -25,13 +25,13 @@ impl From<Layout> for AllocationMode {
 const BLOCK_SIZES: &[usize] = &[8, 16, 32, 64, 128, 256, 512, 1024, 2048];
 
 pub struct KernelAllocator {
-    available_blocks: Mutex<[*mut u8; BLOCK_SIZES.len()]>,
+    available_blocks: Spin<[*mut u8; BLOCK_SIZES.len()]>,
 }
 
 impl KernelAllocator {
     pub const fn new() -> Self {
         Self {
-            available_blocks: Mutex::new([ptr::null_mut(); BLOCK_SIZES.len()]),
+            available_blocks: Spin::new([ptr::null_mut(); BLOCK_SIZES.len()]),
         }
     }
 }

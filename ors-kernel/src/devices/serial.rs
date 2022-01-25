@@ -1,11 +1,11 @@
-use crate::sync::mutex::{Mutex, MutexGuard};
+use crate::sync::spin::{Spin, SpinGuard};
 pub use uart_16550::SerialPort as Port;
 
 const DEFAULT_PORT_ADDRESS: u16 = 0x3f8;
 
-static DEFAULT_PORT: Mutex<Port> = Mutex::new(unsafe { Port::new(DEFAULT_PORT_ADDRESS) });
+static DEFAULT_PORT: Spin<Port> = Spin::new(unsafe { Port::new(DEFAULT_PORT_ADDRESS) });
 
-pub fn default_port() -> MutexGuard<'static, Port> {
+pub fn default_port() -> SpinGuard<'static, Port> {
     DEFAULT_PORT.lock()
 }
 
