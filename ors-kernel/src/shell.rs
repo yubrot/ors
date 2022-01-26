@@ -98,16 +98,30 @@ fn execute_command(command_buf: &str) {
                 );
             }
         }
-        "read" => {
+        "tree" => {
             use crate::devices::virtio::block;
             use crate::fs::volume::virtio::VirtIOBlockVolume;
+            use crate::fs::volume::Volume;
 
-            match fat::FileSystem::new(VirtIOBlockVolume::new(&block::list()[0])) {
-                Ok(mut fs) => {
-                    for item in fs.root_dir().entries() {
-                        kprintln!("{}", item.name());
+            fn tree(indent: usize, dir: fat::Dir<'_, impl Volume>) {
+                for file in dir.files() {
+                    if matches!(file.name(), "." | "..") {
+                        continue;
+                    }
+                    for _ in 0..indent {
+                        kprint!("  ");
+                    }
+                    if let Some(subdir) = file.as_dir() {
+                        kprintln!("+ {}", file.name());
+                        tree(indent + 1, subdir);
+                    } else {
+                        kprintln!("- {}", file.name());
                     }
                 }
+            }
+
+            match fat::FileSystem::new(VirtIOBlockVolume::new(&block::list()[0])) {
+                Ok(fs) => tree(0, fs.root_dir()),
                 Err(e) => kprintln!("error = {:?}", e),
             }
         }

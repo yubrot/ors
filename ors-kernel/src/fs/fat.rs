@@ -3,24 +3,24 @@
 use super::volume::{Sector, Volume, VolumeError};
 use alloc::string::String;
 use alloc::vec;
-use alloc::vec::Vec;
 use core::fmt;
-use dir_entry::{DirEntry as RawDirEntry, SfnEntry};
+use dir_entry::{DirEntry, SfnEntry};
 use fat_entry::FatEntry;
-use log::trace;
+use low_level::{Cluster, DirEntries, Root};
 
 mod boot_sector;
 mod dir_entry;
 mod fat_entry;
+mod low_level;
 
 pub use boot_sector::{BootSector, Error as BootSectorError};
 
 // TODO:
 // * FAT12/16 Support
-// * FSINFO support
-// * Reduce Volume I/O
-// * ...
-// * Mark as unsafe?
+// * Handle bpb_num_fats (Currently FAT copies are completely untouched)
+// * Handle _bpb_fs_info to reduce FAT traversal
+// * Handle _bpb_bk_boot_sec correctly
+// * Better error recovering
 
 /// Errors that occur during FAT file system operations.
 #[derive(PartialEq, Eq, Debug)]
@@ -51,86 +51,62 @@ impl fmt::Display for Error {
 }
 
 /// Entry point of the FAT File System.
-#[derive(Debug)]
 pub struct FileSystem<V> {
-    volume: V,
-    bs: BootSector,
+    root: Root<V>,
 }
 
 impl<V: Volume> FileSystem<V> {
     pub fn new(volume: V) -> Result<Self, Error> {
-        let sector_size = volume.sector_size();
-        let mut buf = vec![0; sector_size];
+        Ok(Self {
+            root: Root::new(volume)?,
+        })
+    }
 
-        volume.read(Sector::from_index(0), buf.as_mut())?;
-        let bs = BootSector::try_from(buf.as_ref())?;
-
-        if bs.sector_size() != sector_size {
-            Err(BootSectorError::Broken("BytsPerSec (mismatch)"))?;
-        }
-        if volume.sector_count() < bs.total_sector_count() as usize {
-            Err(BootSectorError::Broken("TotSec (mismatch)"))?;
-        }
-
-        Ok(Self { volume, bs })
+    pub fn boot_sector(&self) -> &BootSector {
+        self.root.boot_sector()
     }
 
     pub fn root_dir(&self) -> Dir<V> {
-        Dir {
-            fs: self,
-            cluster: self.bs.root_dir_cluster(),
-        }
-    }
-
-    fn read_fat_entry(&self, n: Cluster, buf: &mut [u8]) -> Result<FatEntry, Error> {
-        debug_assert!(self.bs.sector_size() <= buf.len());
-        let (sector, offset) = self.bs.fat_entry_location(n);
-        self.volume
-            .read(sector, &mut buf[0..self.bs.sector_size()])?;
-        Ok(FatEntry::from(u32::from_le_bytes(
-            buf.array::<4>(offset as usize),
-        )))
-    }
-
-    fn read_data(&self, n: Cluster, buf: &mut [u8]) -> Result<(), Error> {
-        debug_assert_eq!(self.bs.cluster_size() * self.bs.sector_size(), buf.len());
-        let sector = self.bs.cluster_location(n);
-        Ok(self.volume.read(sector, buf)?)
+        let cluster = self.boot_sector().root_dir_cluster();
+        Dir::new(&self.root, cluster)
     }
 }
 
 #[derive(Debug)]
 pub struct Dir<'a, V> {
-    fs: &'a FileSystem<V>,
+    root: &'a Root<V>,
     cluster: Cluster,
 }
 
 impl<'a, V: Volume> Dir<'a, V> {
-    pub fn entries(&self) -> DirIter<'a, V> {
+    fn new(root: &'a Root<V>, cluster: Cluster) -> Self {
+        Self { root, cluster }
+    }
+
+    pub fn files(&self) -> DirIter<V> {
         DirIter {
-            inner: self.raw_entries(),
+            root: self.root,
+            cluster: self.cluster,
+            inner: self.root.dir_entries(self.cluster),
         }
     }
 
-    fn raw_entries(&self) -> RawDirIter<'a, V> {
-        RawDirIter {
-            fs: self.fs,
-            cursor: RawDirCursor::Init(self.cluster),
-        }
-    }
+    // TODO: create_file(..), create_dir(..)
 }
 
 #[derive(Debug)]
 pub struct DirIter<'a, V> {
-    inner: RawDirIter<'a, V>,
+    root: &'a Root<V>,
+    cluster: Cluster,
+    inner: DirEntries<'a, V>,
 }
 
 impl<'a, V: Volume> DirIter<'a, V> {
-    fn handle_entry(&mut self, entry: RawDirEntry) -> Option<DirEntry> {
+    fn handle_entry(&mut self, (c, n, entry): (Cluster, usize, DirEntry)) -> Option<File<'a, V>> {
         match entry {
-            RawDirEntry::UnusedTerminal => None,
-            RawDirEntry::Unused => self.next(),
-            RawDirEntry::Lfn(lfn) if lfn.is_last_entry() => {
+            DirEntry::UnusedTerminal => None,
+            DirEntry::Unused => self.next(),
+            DirEntry::Lfn(lfn) if lfn.is_last_entry() => {
                 let checksum = lfn.checksum();
                 let mut order = lfn.order();
                 let mut name_buf = vec![0; order * 13];
@@ -143,156 +119,112 @@ impl<'a, V: Volume> DirIter<'a, V> {
 
                 // `order` LFN entries:
                 while order != 0 {
-                    let (_, _, entry) = self.inner.next()?;
+                    let next @ (_, _, entry) = self.inner.next()?;
                     match entry {
-                        RawDirEntry::Lfn(lfn)
+                        DirEntry::Lfn(lfn)
                             if lfn.checksum() == checksum && lfn.order() == order =>
                         {
                             order -= 1;
                             lfn.put_name_parts_into(&mut name_buf[order * 13..]);
                         }
-                        entry => return self.handle_entry(entry),
+                        _ => return self.handle_entry(next),
                     }
                 }
 
                 // a SFN entry:
-                let (_, _, entry) = self.inner.next()?;
+                let next @ (_, _, entry) = self.inner.next()?;
                 match entry {
-                    RawDirEntry::Sfn(sfn) if sfn.checksum() == checksum => {
+                    DirEntry::Sfn(sfn) if sfn.checksum() == checksum => {
                         // LFN is 0x0000-terminated and padded with 0xffff
                         while matches!(name_buf.last(), Some(0xffff)) {
                             name_buf.pop();
                         }
                         if name_buf.pop() != Some(0x0000) {
-                            return self.handle_entry(entry);
+                            return self.handle_entry(next);
                         }
                         let name = String::from_utf16_lossy(name_buf.as_slice());
-                        Some(DirEntry { name, sfn })
+                        Some(File::new(self.root, self.cluster, name, sfn, (c, n)))
                     }
                     // failback
-                    entry => return self.handle_entry(entry),
+                    _ => return self.handle_entry(next),
                 }
             }
-            RawDirEntry::Lfn(_) => self.next(),
-            RawDirEntry::Sfn(sfn) if sfn.is_volume_id() => self.next(),
-            RawDirEntry::Sfn(sfn) => {
+            DirEntry::Lfn(_) => self.next(),
+            DirEntry::Sfn(sfn) if sfn.is_volume_id() => self.next(),
+            DirEntry::Sfn(sfn) => {
                 let (_, name) = sfn.name();
-                Some(DirEntry { name, sfn })
+                Some(File::new(self.root, self.cluster, name, sfn, (c, n)))
             }
         }
     }
 }
 
 impl<'a, V: Volume> Iterator for DirIter<'a, V> {
-    type Item = DirEntry;
+    type Item = File<'a, V>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (_, _, entry) = self.inner.next()?;
-        self.handle_entry(entry)
+        let next = self.inner.next()?;
+        self.handle_entry(next)
     }
 }
 
 #[derive(Debug)]
-pub struct DirEntry {
+pub struct File<'a, V> {
+    root: &'a Root<V>,
+    dir: Cluster,
     name: String,
-    sfn: SfnEntry,
+    last_entry: SfnEntry,
+    entry_location: (Cluster, usize),
 }
 
-impl DirEntry {
+impl<'a, V: Volume> File<'a, V> {
+    fn new(
+        root: &'a Root<V>,
+        dir: Cluster,
+        name: String,
+        last_entry: SfnEntry,
+        entry_location: (Cluster, usize),
+    ) -> Self {
+        Self {
+            root,
+            dir,
+            name,
+            last_entry,
+            entry_location,
+        }
+    }
+
     pub fn name(&self) -> &str {
         self.name.as_str()
     }
-}
 
-impl From<SfnEntry> for DirEntry {
-    fn from(sfn: SfnEntry) -> Self {
-        let (_, name) = sfn.name();
-        DirEntry { name, sfn }
+    pub fn is_read_only(&self) -> bool {
+        self.last_entry.is_read_only()
     }
-}
 
-#[derive(Debug)]
-struct RawDirIter<'a, V> {
-    fs: &'a FileSystem<V>,
-    cursor: RawDirCursor,
-}
+    pub fn is_hidden(&self) -> bool {
+        self.last_entry.is_hidden()
+    }
 
-impl<'a, V: Volume> Iterator for RawDirIter<'a, V> {
-    type Item = (Cluster, usize, RawDirEntry);
+    pub fn is_system(&self) -> bool {
+        self.last_entry.is_system()
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        match core::mem::replace(&mut self.cursor, RawDirCursor::End) {
-            RawDirCursor::Init(cluster) => {
-                let buf = vec![0; self.fs.bs.cluster_size() * self.fs.bs.sector_size()];
-                self.cursor = RawDirCursor::Start(cluster, buf);
-                self.next()
-            }
-            RawDirCursor::Start(cluster, mut buf) => {
-                match self.fs.read_data(cluster, buf.as_mut()) {
-                    Ok(()) => {
-                        self.cursor = RawDirCursor::Mid(cluster, buf, 0);
-                        self.next()
-                    }
-                    Err(e) => {
-                        trace!("Failed to read data at cluster={}: {:?}", cluster, e);
-                        None
-                    }
-                }
-            }
-            RawDirCursor::Mid(cluster, buf, offset) if offset < buf.len() => {
-                let entry = RawDirEntry::from(buf.array::<{ RawDirEntry::SIZE }>(offset));
-                if !matches!(entry, RawDirEntry::UnusedTerminal) {
-                    self.cursor = RawDirCursor::Mid(cluster, buf, offset + RawDirEntry::SIZE);
-                }
-                Some((cluster, offset, entry))
-            }
-            RawDirCursor::Mid(cluster, mut buf, _) => {
-                match self.fs.read_fat_entry(cluster, buf.as_mut()) {
-                    Ok(FatEntry::UsedChained(cluster)) => {
-                        self.cursor = RawDirCursor::Start(cluster, buf);
-                        self.next()
-                    }
-                    Ok(_) => None,
-                    Err(e) => {
-                        trace!("Failed to read FAT entry of cluster={}: {:?}", cluster, e);
-                        None
-                    }
-                }
-            }
-            RawDirCursor::End => None,
+    // TODO: set_is_read_only, set_is_hidden, set_is_system
+
+    pub fn is_dir(&self) -> bool {
+        self.last_entry.is_directory()
+    }
+
+    pub fn as_dir(&self) -> Option<Dir<V>> {
+        if self.is_dir() {
+            Some(Dir::new(self.root, self.last_entry.cluster()?))
+        } else {
+            None
         }
     }
-}
 
-#[derive(PartialEq, Eq, Debug, Clone)]
-enum RawDirCursor {
-    Init(Cluster),
-    Start(Cluster, Vec<u8>),
-    Mid(Cluster, Vec<u8>, usize),
-    End,
-}
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy, Hash)]
-pub(super) struct Cluster(usize);
-
-impl Cluster {
-    pub(super) fn from_index(index: usize) -> Self {
-        Self(index)
-    }
-
-    pub(super) fn index(self) -> usize {
-        self.0
-    }
-
-    pub(super) fn offset(self, s: usize) -> Self {
-        Self(self.0 + s)
-    }
-}
-
-impl fmt::Display for Cluster {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
+    // TODO: contetnts(), remove(), move()
 }
 
 trait SliceExt {

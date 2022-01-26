@@ -1,4 +1,4 @@
-use super::SliceExt;
+use super::{Cluster, SliceExt};
 use alloc::string::String;
 
 /// Deserialized Directory entry.
@@ -91,8 +91,16 @@ impl SfnEntry {
             }
         };
         put(&self.name[0..8], (self.nt_res & 0x08) == 0x08);
+        if self.name[8] != 32 {
+            put(&['.' as u8], false);
+        }
         put(&self.name[8..11], (self.nt_res & 0x10) == 0x10);
         (is_irreversible, dest)
+    }
+
+    pub(super) fn cluster(&self) -> Option<Cluster> {
+        let index = self.fst_clus_lo as usize | ((self.fst_clus_hi as usize) << 16);
+        (index != 0).then(|| Cluster::from_index(index))
     }
 
     pub(super) fn is_read_only(&self) -> bool {
