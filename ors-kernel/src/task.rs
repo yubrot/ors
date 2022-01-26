@@ -263,12 +263,12 @@ pub struct WaitChannel(i64);
 impl WaitChannel {
     /// Create `WaitChannel` from a pointer.
     /// The uniqueness of the resulting `WaitChannel` depends on the uniqueness of the pointer.
-    pub fn from_ptr<T>(ptr: *const T) -> Self {
+    pub fn from_ptr<T: ?Sized>(ptr: *const T) -> Self {
         Self::from_ptr_index(ptr, 0)
     }
 
-    pub fn from_ptr_index<T>(ptr: *const T, index: u32) -> Self {
-        Self((ptr as i64 + index as i64) & i64::MAX)
+    pub fn from_ptr_index<T: ?Sized>(ptr: *const T, index: u32) -> Self {
+        Self((ptr as *const () as i64 + index as i64) & i64::MAX)
     }
 }
 
