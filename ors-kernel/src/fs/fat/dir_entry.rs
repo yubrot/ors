@@ -103,6 +103,15 @@ impl SfnEntry {
         (index != 0).then(|| Cluster::from_index(index))
     }
 
+    pub(super) fn set_cluster(&mut self, cluster: Option<Cluster>) {
+        let (lo, hi) = match cluster {
+            Some(c) => (c.index() as u16, (c.index() >> 16) as u16),
+            None => (0, 0),
+        };
+        self.fst_clus_lo = lo;
+        self.fst_clus_hi = hi;
+    }
+
     pub(super) fn is_read_only(&self) -> bool {
         (self.attr & DirEntry::READ_ONLY) == DirEntry::READ_ONLY
     }
@@ -131,10 +140,19 @@ impl SfnEntry {
         self.attr |= DirEntry::ARCHIVE;
     }
 
-    pub fn checksum(&self) -> u8 {
+    pub(super) fn checksum(&self) -> u8 {
         self.name.iter().fold(0u8, |sum, c| {
             (sum >> 1).wrapping_add(sum << 7).wrapping_add(*c)
         })
+    }
+
+    pub(super) fn file_size(&self) -> usize {
+        self.file_size as usize
+    }
+
+    pub(super) fn set_file_size(&mut self, size: usize) {
+        assert!(size <= u32::MAX as usize);
+        self.file_size = size as u32;
     }
 }
 

@@ -2,10 +2,14 @@
 
 use crate::console::{input_queue, Input};
 use crate::devices;
+use crate::devices::virtio::block;
 use crate::fs::fat;
+use crate::fs::volume::virtio::VirtIOBlockVolume;
 use crate::interrupts::{ticks, TIMER_FREQ};
 use crate::phys_memory::frame_manager;
+use alloc::borrow::ToOwned;
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt;
 
 static CLEAR: &str = "\x1b[H\x1b[2J";
@@ -17,6 +21,10 @@ static CURSOR_END: &str = "\x1b[0m";
 pub extern "C" fn run(_: u64) -> ! {
     let mut command_buf = String::new();
     let mut cursor = 0;
+    let mut ctx = Context {
+        wd: Path::new(),
+        fs: fat::FileSystem::new(VirtIOBlockVolume::new(&block::list()[0])).unwrap(),
+    };
 
     cprint!("{}", CLEAR);
     kprintln!("[ors shell]");
@@ -39,7 +47,7 @@ pub extern "C" fn run(_: u64) -> ! {
             Input::Char('\n') => {
                 kprintln!("{}{}{}", INPUT_START, &command_buf, INPUT_END);
                 let t = ticks();
-                execute_command(&command_buf);
+                execute_command(&command_buf, &mut ctx);
                 let t = ticks() - t;
                 command_buf.clear();
                 cursor = 0;
@@ -68,62 +76,134 @@ pub extern "C" fn run(_: u64) -> ! {
     }
 }
 
-fn execute_command(command_buf: &str) {
-    match command_buf.trim() {
+#[derive(Debug)]
+struct Context {
+    wd: Path,
+    fs: fat::FileSystem<VirtIOBlockVolume>, // TODO: Move to appropriate static location
+}
+
+fn execute_command(command_buf: &str, ctx: &mut Context) {
+    let command_and_args = command_buf.trim().split_whitespace().collect::<Vec<_>>();
+    let (command, args) = match command_and_args.first() {
+        Some(c) => (*c, &command_and_args[1..]),
+        None => return,
+    };
+
+    match command {
         "clear" => kprint!("{}", CLEAR),
-        "stats" => {
-            kprintln!("[phys_memory]");
-            {
-                let mut graph = [0.0; 100];
-                let (total, available) = {
-                    let fm = frame_manager();
-                    let total = fm.total_frames();
-                    let available = fm.available_frames();
-                    for i in 0..100 {
-                        graph[i] =
-                            fm.availability_in_range(i as f64 / 100.0, (i + 1) as f64 / 100.0);
-                    }
-                    (total, available)
-                };
-                for a in graph {
-                    kprint!("\x1b[48;5;{}m \x1b[0m", 232 + (23.0 * a) as usize);
+        "pwd" => kprintln!("{}", ctx.wd),
+        "cd" => match args.first() {
+            Some(path) => {
+                let mut wd = ctx.wd.clone();
+                wd.cd(path);
+                match wd.get_dir(&ctx.fs) {
+                    Some(_) => ctx.wd = wd,
+                    None => kprintln!("Not a directory: {}", wd),
                 }
-                kprintln!();
-                kprintln!(
-                    "{}/{} frames ({}/{})",
-                    available,
-                    total,
-                    PrettySize(available * 4096),
-                    PrettySize(total * 4096)
-                );
             }
-        }
-        "tree" => {
-            use crate::devices::virtio::block;
-            use crate::fs::volume::virtio::VirtIOBlockVolume;
-            use crate::fs::volume::Volume;
-
-            fn tree(indent: usize, dir: fat::Dir<'_, impl Volume>) {
-                for file in dir.files() {
-                    if matches!(file.name(), "." | "..") {
-                        continue;
-                    }
-                    for _ in 0..indent {
-                        kprint!("  ");
-                    }
-                    if let Some(subdir) = file.as_dir() {
-                        kprintln!("+ {}", file.name());
-                        tree(indent + 1, subdir);
+            None => ctx.wd.parts.clear(),
+        },
+        "ls" => match ctx.wd.get_dir(&ctx.fs) {
+            Some(dir) => {
+                for f in dir.files() {
+                    if f.is_dir() {
+                        kprintln!("{}/", f.name());
                     } else {
-                        kprintln!("- {}", file.name());
+                        kprintln!("{} ({})", f.name(), PrettySize(f.file_size()));
                     }
                 }
             }
-
-            match fat::FileSystem::new(VirtIOBlockVolume::new(&block::list()[0])) {
-                Ok(fs) => tree(0, fs.root_dir()),
-                Err(e) => kprintln!("error = {:?}", e),
+            None => kprintln!("Directory not found: {}", ctx.wd),
+        },
+        "read" => match args.first() {
+            Some(path) => {
+                let mut wd = ctx.wd.clone();
+                wd.cd(path);
+                match wd.get_file(&ctx.fs) {
+                    Some(file) => match file.reader() {
+                        Some(reader) => match reader.read_to_end() {
+                            Ok(buf) => match String::from_utf8(buf) {
+                                Ok(s) => kprintln!("{}", s),
+                                Err(e) => kprintln!("<binary file ({} bytes)>", e.as_bytes().len()),
+                            },
+                            Err(e) => kprintln!("Read error: {}", e),
+                        },
+                        None => kprintln!("This is a directory: {}", wd),
+                    },
+                    None => kprintln!("File not found: {}", wd),
+                }
             }
+            None => kprintln!("read <file>"),
+        },
+        "overwrite" => match args.first() {
+            Some(path) => {
+                let mut wd = ctx.wd.clone();
+                wd.cd(path);
+                match wd.get_file(&ctx.fs) {
+                    Some(mut file) => match file.overwriter() {
+                        Some(mut writer) => {
+                            let mut s = args[1..].join(" ").to_owned();
+                            if !s.is_empty() {
+                                s.push('\n');
+                            }
+                            if let Err(e) = writer.write(s.as_bytes()) {
+                                kprintln!("Write error: {}", e);
+                            }
+                        }
+                        None => kprintln!("This is a directory: {}", wd),
+                    },
+                    None => kprintln!("File not found: {}", wd),
+                }
+                let _ = ctx.fs.commit();
+            }
+            None => kprintln!("overwrite <file> <text>"),
+        },
+        "append" => match args.first() {
+            Some(path) => {
+                let mut wd = ctx.wd.clone();
+                wd.cd(path);
+                match wd.get_file(&ctx.fs) {
+                    Some(mut file) => match file.appender() {
+                        Some(mut writer) => {
+                            let mut s = args[1..].join(" ").to_owned();
+                            if !s.is_empty() {
+                                s.push('\n');
+                            }
+                            if let Err(e) = writer.write(s.as_bytes()) {
+                                kprintln!("Write error: {}", e);
+                            }
+                        }
+                        None => kprintln!("This is a directory: {}", wd),
+                    },
+                    None => kprintln!("File not found: {}", wd),
+                }
+                let _ = ctx.fs.commit();
+            }
+            None => kprintln!("append <file> <text>"),
+        },
+        "memstats" => {
+            kprintln!("[phys_memory]");
+            let mut graph = [0.0; 100];
+            let (total, available) = {
+                let fm = frame_manager();
+                let total = fm.total_frames();
+                let available = fm.available_frames();
+                for i in 0..100 {
+                    graph[i] = fm.availability_in_range(i as f64 / 100.0, (i + 1) as f64 / 100.0);
+                }
+                (total, available)
+            };
+            for a in graph {
+                kprint!("\x1b[48;5;{}m \x1b[0m", 232 + (23.0 * a) as usize);
+            }
+            kprintln!();
+            kprintln!(
+                "{}/{} frames ({}/{})",
+                available,
+                total,
+                PrettySize(available * 4096),
+                PrettySize(total * 4096)
+            );
         }
         "lspci" => {
             for d in devices::pci::devices() {
@@ -189,8 +269,70 @@ fn execute_command(command_buf: &str) {
             kprintln!();
         }
         "shutdown" => devices::qemu::exit(devices::qemu::ExitCode::Success),
-        "" => {}
         cmd => kprintln!("Unsupported command: {}", cmd),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Path {
+    parts: Vec<String>,
+}
+
+impl Path {
+    fn new() -> Self {
+        Self { parts: Vec::new() }
+    }
+
+    fn cd(&mut self, path: &str) {
+        for p in path.split('/') {
+            match p {
+                ".." => {
+                    self.parts.pop();
+                }
+                "" | "." => {}
+                p => self.parts.push(p.to_owned()),
+            }
+        }
+    }
+
+    fn get_dir<'a>(
+        &self,
+        fs: &'a fat::FileSystem<VirtIOBlockVolume>,
+    ) -> Option<fat::Dir<'a, VirtIOBlockVolume>> {
+        if self.parts.is_empty() {
+            Some(fs.root_dir())
+        } else {
+            self.get_file(fs)?.as_dir()
+        }
+    }
+
+    fn get_file<'a>(
+        &self,
+        fs: &'a fat::FileSystem<VirtIOBlockVolume>,
+    ) -> Option<fat::File<'a, VirtIOBlockVolume>> {
+        if self.parts.is_empty() {
+            None
+        } else {
+            let mut dir = fs.root_dir();
+            let last_index = self.parts.len() - 1;
+            for p in self.parts[0..last_index].iter() {
+                dir = dir.files().find(|f| f.name() == p)?.as_dir()?;
+            }
+            dir.files().find(|f| f.name() == &self.parts[last_index])
+        }
+    }
+}
+
+impl fmt::Display for Path {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.parts.is_empty() {
+            write!(f, "/")?;
+        } else {
+            for p in self.parts.iter() {
+                write!(f, "/{}", p)?;
+            }
+        }
+        Ok(())
     }
 }
 

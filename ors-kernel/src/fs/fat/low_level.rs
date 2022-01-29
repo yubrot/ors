@@ -52,28 +52,19 @@ impl<V: Volume> Root<V> {
         Ok(Self { volume, bs })
     }
 
+    pub(super) fn commit(&self) -> Result<(), Error> {
+        Ok(self.volume.commit()?)
+    }
+
     pub(super) fn boot_sector(&self) -> &BootSector {
         &self.bs
     }
 
-    pub(super) fn fat_entries(&self) -> FatEntries<V> {
-        FatEntries {
+    pub(super) fn fat(&self) -> BufferedFat<V> {
+        BufferedFat {
             root: self,
-            cursor: Some((Cluster(2), None)),
+            last: None,
         }
-    }
-
-    pub(super) fn fat_entry<'a>(
-        &'a self,
-        cluster: Cluster,
-        prev: Option<BufferedFatEntryRef<'a>>, // used to reduce sector search
-    ) -> Result<BufferedFatEntryRef<'a>, Error> {
-        let (sector, offset) = self.bs.fat_entry_location(cluster);
-        let buf = match prev {
-            Some(r) if r.buf.sector() == sector => r.buf,
-            _ => self.volume.sector(sector)?,
-        };
-        Ok(BufferedFatEntryRef { buf, offset })
     }
 
     pub(super) fn cluster(&self, cluster: Cluster) -> BufferedCluster<V> {
@@ -84,68 +75,118 @@ impl<V: Volume> Root<V> {
             first_sector,
             sector_count: self.bs.cluster_size(),
             sector_size: self.bs.sector_size(),
+            last: None,
         }
-    }
-
-    pub(super) fn chained_cluster(
-        &self,
-        cluster: Cluster,
-    ) -> Result<Option<BufferedCluster<V>>, Error> {
-        let entry = self.fat_entry(cluster, None)?;
-        Ok(match entry.read() {
-            FatEntry::UsedChained(cluster) => Some(self.cluster(cluster)),
-            _ => None,
-        })
     }
 
     pub(super) fn dir_entries(&self, cluster: Cluster) -> DirEntries<V> {
         DirEntries {
             root: self,
-            cursor: Some((self.cluster(cluster), 0, None)),
+            cursor: Some((self.cluster(cluster), 0)),
         }
     }
 }
 
 #[derive(Debug)]
-pub(super) struct BufferedFatEntryRef<'a> {
-    buf: BufferedSectorRef<'a>,
-    offset: usize,
+pub(super) struct BufferedFat<'a, V> {
+    root: &'a Root<V>,
+    last: Option<BufferedSectorRef<'a>>, // cached to reduce sector search
 }
 
-impl<'a> BufferedFatEntryRef<'a> {
-    pub(super) fn read(&self) -> FatEntry {
-        u32::from_le_bytes(self.buf.bytes().array::<4>(self.offset)).into()
+impl<'a, V: Volume> BufferedFat<'a, V> {
+    pub(super) fn entries<'f>(&'f mut self) -> FatEntries<'f, 'a, V> {
+        FatEntries {
+            fat: self,
+            cursor: Some(Cluster(2)),
+        }
     }
 
-    pub(super) fn write(&self, value: FatEntry) {
-        self.buf
+    fn entry(&mut self, cluster: Cluster) -> Result<(&BufferedSectorRef<'a>, usize), Error> {
+        let (sector, offset) = self.root.bs.fat_entry_location(cluster);
+        if !matches!(self.last, Some(ref r) if r.sector() == sector) {
+            self.last = Some(self.root.volume.sector(sector)?);
+        }
+        Ok((self.last.as_ref().unwrap(), offset))
+    }
+
+    pub(super) fn allocate(&mut self) -> Result<Cluster, Error> {
+        // FIXME: This implementation is too slow since it always searches from the start
+        for (c, entry) in self.entries() {
+            if matches!(entry, FatEntry::Unused) {
+                self.write(c, FatEntry::UsedEoc)?;
+                return Ok(c);
+            }
+        }
+        Err(Error::Full)
+    }
+
+    pub(super) fn free(&mut self, c: Cluster) -> Result<(), Error> {
+        let mut next_c = Some(c);
+        while let Some(c) = next_c {
+            match self.read(c)? {
+                FatEntry::UsedChained(c) => next_c = Some(c),
+                FatEntry::UsedEoc => next_c = None,
+                _ => break,
+            }
+            self.write(c, FatEntry::Unused)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn read(&mut self, cluster: Cluster) -> Result<FatEntry, Error> {
+        let (sector, offset) = self.entry(cluster)?;
+        Ok(u32::from_le_bytes(sector.bytes().array::<4>(offset)).into())
+    }
+
+    pub(super) fn write(&mut self, cluster: Cluster, value: FatEntry) -> Result<(), Error> {
+        let (sector, offset) = self.entry(cluster)?;
+        sector
             .bytes()
-            .copy_from_array::<4>(self.offset, u32::to_le_bytes(value.into()));
-        self.buf.mark_as_dirty();
+            .copy_from_array::<4>(offset, u32::to_le_bytes(value.into()));
+        sector.mark_as_dirty();
+        Ok(())
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
+pub(super) struct FatEntries<'f, 'a, V> {
+    fat: &'f mut BufferedFat<'a, V>,
+    cursor: Option<Cluster>,
+}
+
+impl<'f, 'a, V: Volume> Iterator for FatEntries<'f, 'a, V> {
+    type Item = (Cluster, FatEntry);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let n = core::mem::take(&mut self.cursor)?;
+        if self.fat.root.bs.is_cluster_available(n) {
+            let entry = self.fat.read(n).trace_err()?;
+            self.cursor = Some(n.offset(1));
+            Some((n, entry))
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub(super) struct BufferedCluster<'a, V> {
     cluster: Cluster,
     volume: &'a BufferedVolume<V>,
     first_sector: Sector,
     sector_count: usize,
     sector_size: usize,
+    last: Option<BufferedSectorRef<'a>>, // cached to reduce sector search
 }
 
 impl<'a, V: Volume> BufferedCluster<'a, V> {
-    fn sector(
-        &self,
-        index: usize,
-        prev: Option<BufferedSectorRef<'a>>, // used to reduce sector search
-    ) -> Result<BufferedSectorRef<'a>, Error> {
+    fn sector(&mut self, index: usize) -> Result<&BufferedSectorRef<'a>, Error> {
         debug_assert!(index < self.sector_count);
         let sector = self.first_sector.offset(index);
-        match prev {
-            Some(r) if r.sector() == sector => Ok(r),
-            _ => Ok(self.volume.sector(sector)?),
+        if !matches!(self.last, Some(ref r) if r.sector() == sector) {
+            self.last = Some(self.volume.sector(sector)?);
         }
+        Ok(self.last.as_ref().unwrap())
     }
 
     fn sector_range(
@@ -166,109 +207,70 @@ impl<'a, V: Volume> BufferedCluster<'a, V> {
         })
     }
 
+    pub(super) fn cluster(&self) -> Cluster {
+        self.cluster
+    }
+
     pub(super) fn size(&self) -> usize {
         self.sector_size * self.sector_count
     }
 
-    pub(super) fn read(
-        &self,
-        offset: usize,
-        mut buf: &mut [u8],
-        mut prev: Option<BufferedSectorRef<'a>>,
-    ) -> Result<Option<BufferedSectorRef<'a>>, Error> {
+    pub(super) fn read(&mut self, offset: usize, mut buf: &mut [u8]) -> Result<(), Error> {
         for (sector, i, j) in self.sector_range(offset, offset + buf.len()) {
-            let curr = self.sector(sector, prev)?;
-            buf[0..j - i].copy_from_slice(&curr.bytes()[i..j]);
+            let s = self.sector(sector)?;
+            buf[0..j - i].copy_from_slice(&s.bytes()[i..j]);
             buf = &mut buf[j - i..];
-            prev = Some(curr);
         }
-        Ok(prev)
+        Ok(())
     }
 
-    pub(super) fn write(
-        &self,
-        offset: usize,
-        mut buf: &[u8],
-        mut prev: Option<BufferedSectorRef<'a>>,
-    ) -> Result<Option<BufferedSectorRef<'a>>, Error> {
+    pub(super) fn write(&mut self, offset: usize, mut buf: &[u8]) -> Result<(), Error> {
         for (sector, i, j) in self.sector_range(offset, offset + buf.len()) {
-            let curr = self.sector(sector, prev)?;
-            curr.bytes()[i..j].copy_from_slice(&buf[0..j - i]);
+            let s = self.sector(sector)?;
+            s.bytes()[i..j].copy_from_slice(&buf[0..j - i]);
+            s.mark_as_dirty();
             buf = &buf[j - i..];
-            prev = Some(curr);
         }
-        Ok(prev)
+        Ok(())
     }
 
     pub(super) fn dir_entries_count(&self) -> usize {
         self.size() / DirEntry::SIZE
     }
 
-    pub(super) fn read_dir_entry(
-        &self,
-        index: usize,
-        prev: Option<BufferedSectorRef<'a>>,
-    ) -> Result<(DirEntry, Option<BufferedSectorRef<'a>>), Error> {
+    pub(super) fn read_dir_entry(&mut self, index: usize) -> Result<DirEntry, Error> {
         let mut buf = [0; DirEntry::SIZE];
-        let curr = self.read(index * DirEntry::SIZE, buf.as_mut(), prev)?;
-        Ok((buf.into(), curr))
+        self.read(index * DirEntry::SIZE, buf.as_mut())?;
+        Ok(buf.into())
     }
 
-    pub(super) fn write_dir_entry(
-        &self,
-        index: usize,
-        entry: DirEntry,
-        prev: Option<BufferedSectorRef<'a>>,
-    ) -> Result<Option<BufferedSectorRef<'a>>, Error> {
+    pub(super) fn write_dir_entry(&mut self, index: usize, entry: DirEntry) -> Result<(), Error> {
         let buf: [u8; 32] = entry.into();
-        let curr = self.write(index * DirEntry::SIZE, buf.as_ref(), prev)?;
-        Ok(curr)
-    }
-}
-
-#[derive(Debug)]
-pub(super) struct FatEntries<'a, V> {
-    root: &'a Root<V>,
-    cursor: Option<(Cluster, Option<BufferedFatEntryRef<'a>>)>,
-}
-
-impl<'a, V: Volume> Iterator for FatEntries<'a, V> {
-    type Item = (Cluster, FatEntry);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let (n, prev) = core::mem::replace(&mut self.cursor, None)?;
-        if self.root.bs.is_cluster_available(n) {
-            let curr = self.root.fat_entry(n, prev).trace_err()?;
-            let entry = curr.read();
-            self.cursor = Some((n.offset(1), Some(curr)));
-            Some((n, entry))
-        } else {
-            None
-        }
+        self.write(index * DirEntry::SIZE, buf.as_ref())
     }
 }
 
 #[derive(Debug)]
 pub(super) struct DirEntries<'a, V> {
     root: &'a Root<V>,
-    cursor: Option<(BufferedCluster<'a, V>, usize, Option<BufferedSectorRef<'a>>)>,
+    cursor: Option<(BufferedCluster<'a, V>, usize)>,
 }
 
 impl<'a, V: Volume> Iterator for DirEntries<'a, V> {
     type Item = (Cluster, usize, DirEntry);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (c, n, prev) = core::mem::replace(&mut self.cursor, None)?;
+        let (mut c, n) = core::mem::take(&mut self.cursor)?;
         if n < c.dir_entries_count() {
             let cluster = c.cluster;
-            let (entry, curr) = c.read_dir_entry(n, prev).trace_err()?;
+            let entry = c.read_dir_entry(n).trace_err()?;
             if !matches!(entry, DirEntry::UnusedTerminal) {
-                self.cursor = Some((c, n + 1, curr));
+                self.cursor = Some((c, n + 1));
             }
             Some((cluster, n, entry))
         } else {
-            let c = self.root.chained_cluster(c.cluster).trace_err()??;
-            self.cursor = Some((c, 0, None));
+            let fat_entry = self.root.fat().read(c.cluster).trace_err()?;
+            self.cursor = Some((self.root.cluster(fat_entry.chain()?), 0));
             self.next()
         }
     }

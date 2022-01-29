@@ -1,4 +1,5 @@
 use super::Cluster;
+use core::fmt;
 
 /// Deserialized FAT entry.
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
@@ -8,6 +9,33 @@ pub(super) enum FatEntry {
     UsedChained(Cluster),
     UsedEoc,
     Bad,
+}
+
+impl FatEntry {
+    pub(super) fn chain(self) -> Option<Cluster> {
+        match self {
+            Self::UsedChained(c) => Some(c),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for FatEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FatEntry::Unused => write!(f, "unused"),
+            FatEntry::Reserved => write!(f, "reserved"),
+            FatEntry::UsedChained(c) => write!(f, "used({})", c),
+            FatEntry::UsedEoc => write!(f, "used(eoc)"),
+            FatEntry::Bad => write!(f, "bad"),
+        }
+    }
+}
+
+impl From<Cluster> for FatEntry {
+    fn from(c: Cluster) -> Self {
+        Self::UsedChained(c)
+    }
 }
 
 impl From<u32> for FatEntry {
@@ -26,11 +54,11 @@ impl From<u32> for FatEntry {
 impl Into<u32> for FatEntry {
     fn into(self) -> u32 {
         match self {
-            FatEntry::Unused => 0,
-            FatEntry::Reserved => 1,
-            FatEntry::UsedChained(cluster) => cluster.index() as u32,
-            FatEntry::UsedEoc => 0x0fffffff,
-            FatEntry::Bad => 0x0ffffff7,
+            Self::Unused => 0,
+            Self::Reserved => 1,
+            Self::UsedChained(cluster) => cluster.index() as u32,
+            Self::UsedEoc => 0x0fffffff,
+            Self::Bad => 0x0ffffff7,
         }
     }
 }

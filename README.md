@@ -36,14 +36,14 @@ ors is based on [MikanOS](https://github.com/uchan-nos/mikanos) and [blog_os (Se
 | Block Support       | VirtIO over PCI | - [^3]         | -                | IDE [^4]      |
 | Timers              | APIC + ACPI PM  | APIC + ACPI PM | 8259 PIC         | APIC          |
 | Multitasking        | Preemptive      | Preemptive     | WIP [^5]         | Preemptive    |
-| File System         | WIP             | FAT            | -                | original [^6] |
+| File System         | FAT             | FAT            | -                | original [^6] |
 
 [^1]: Maintaining the x86 version have stopped, and switched to the [RISC-V version](https://github.com/mit-pdos/xv6-riscv)
 [^2]: [UEFI is planned](https://github.com/phil-opp/blog_os/issues/349)
-[^3]: Only very limited reading (by UEFI Block I/O) is supported
+[^3]: Supports only very limited reading (by UEFI Block I/O)
 [^4]: [RISC-V version of xv6](https://github.com/mit-pdos/xv6-riscv) supports VirtIO over MMIO
 [^5]: blog_os supports [Cooperative Multitasking](https://os.phil-opp.com/async-await/) at the moment
-[^6]: Simpler but similar to modern UNIX file systems
+[^6]: Simpler but similar to modern UNIX file systems, including crash recovering
 
 ## Roadmap
 
