@@ -120,7 +120,7 @@ impl<'a, V: Volume> BufferedFat<'a, V> {
         Err(Error::Full)
     }
 
-    pub(super) fn free(&mut self, c: Cluster) -> Result<(), Error> {
+    pub(super) fn release(&mut self, c: Cluster) -> Result<(), Error> {
         let mut next_c = Some(c);
         while let Some(c) = next_c {
             match self.read(c)? {

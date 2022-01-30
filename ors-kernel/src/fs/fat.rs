@@ -29,6 +29,7 @@ pub enum Error {
     Volume(VolumeError),
     BootSector(BootSectorError),
     Full,
+    DirectoryNotEmpty,
 }
 
 impl From<VolumeError> for Error {
@@ -49,6 +50,7 @@ impl fmt::Display for Error {
             Self::Volume(e) => write!(f, "{}", e),
             Self::BootSector(e) => write!(f, "{}", e),
             Self::Full => write!(f, "Full"),
+            Self::DirectoryNotEmpty => write!(f, "Directory not empty"),
         }
     }
 }
@@ -146,8 +148,8 @@ impl<'a, V: Volume> DirIter<'a, V> {
                         while matches!(name_buf.last(), Some(0xffff)) {
                             name_buf.pop();
                         }
-                        if name_buf.pop() != Some(0x0000) {
-                            return self.handle_entry(next);
+                        if matches!(name_buf.last(), Some(0x0000)) {
+                            name_buf.pop();
                         }
                         let name = String::from_utf16_lossy(name_buf.as_slice());
                         Some(File {
@@ -197,7 +199,8 @@ pub struct File<'a, V> {
 }
 
 impl<'a, V: Volume> File<'a, V> {
-    fn write_back(&self) -> Result<(), Error> {
+    fn write_back(&mut self) -> Result<(), Error> {
+        self.last_entry.0.mark_archive();
         let (entry, c, n) = self.last_entry;
         self.root
             .cluster(c)
@@ -224,11 +227,6 @@ impl<'a, V: Volume> File<'a, V> {
 
     pub fn archive(&self) -> bool {
         self.last_entry.0.archive()
-    }
-
-    pub fn mark_archive(&mut self) -> Result<(), Error> {
-        self.last_entry.0.mark_archive();
-        self.write_back()
     }
 
     pub fn is_dir(&self) -> bool {
@@ -261,7 +259,6 @@ impl<'a, V: Volume> File<'a, V> {
 
     fn set_cluster(&mut self, cluster: Option<Cluster>) -> Result<(), Error> {
         self.last_entry.0.set_cluster(cluster);
-        self.last_entry.0.mark_archive();
         self.write_back()
     }
 
@@ -320,7 +317,49 @@ impl<'a, V: Volume> File<'a, V> {
         }
     }
 
-    // TODO: remove(), move()
+    pub fn remove(self, recursive: bool) -> Result<(), Error> {
+        if let Some(dir) = self.as_dir() {
+            for file in dir.files() {
+                if !matches!(file.name(), "." | "..") {
+                    if recursive {
+                        file.remove(true)?;
+                    } else {
+                        Err(Error::DirectoryNotEmpty)?;
+                    }
+                }
+            }
+        } else if let Some(c) = self.cluster() {
+            self.root.fat().release(c)?;
+        }
+
+        let (start_c, start_offset) = self.entry_location;
+        let (_, end_c, end_offset) = self.last_entry;
+        let mut c = self.root.cluster(start_c);
+
+        loop {
+            let i = match c.cluster() == start_c {
+                true => start_offset,
+                false => 0,
+            };
+            let j = match c.cluster() == end_c {
+                true => end_offset,
+                false => c.dir_entries_count() - 1,
+            };
+            for offset in i..=j {
+                c.write_dir_entry(offset, DirEntry::Unused)?;
+            }
+            if c.cluster() == end_c {
+                break;
+            }
+            match self.root.fat().read(c.cluster())?.chain() {
+                Some(next_c) => c = self.root.cluster(next_c),
+                None => break, // TODO: How should we handle the broken cluster chain?
+            }
+        }
+        Ok(())
+    }
+
+    // TODO: move()
 }
 
 #[derive(Debug)]
@@ -417,13 +456,13 @@ impl<'a, V: Volume> Drop for FileWriter<'a, V> {
                 let last_c = c.cluster();
                 if let Ok(FatEntry::UsedChained(c)) = self.file.root.fat().read(last_c) {
                     let _ = self.file.root.fat().write(last_c, FatEntry::UsedEoc); // FAT[last_c] -x-> c
-                    let _ = self.file.root.fat().free(c);
+                    let _ = self.file.root.fat().release(c);
                 }
             }
             None => {
                 if let Some(c) = self.file.cluster() {
                     let _ = self.file.set_cluster(None); // file.cluster -x-> c
-                    let _ = self.file.root.fat().free(c);
+                    let _ = self.file.root.fat().release(c);
                 }
             }
         }

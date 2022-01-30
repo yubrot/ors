@@ -135,12 +135,16 @@ fn execute_command(command_buf: &str, ctx: &mut Context) {
             }
             None => kprintln!("read <file>"),
         },
-        "overwrite" => match args.first() {
+        "write" | "append" => match args.first() {
             Some(path) => {
                 let mut wd = ctx.wd.clone();
                 wd.cd(path);
                 match wd.get_file(&ctx.fs) {
-                    Some(mut file) => match file.overwriter() {
+                    Some(mut file) => match if command == "write" {
+                        file.overwriter()
+                    } else {
+                        file.appender()
+                    } {
                         Some(mut writer) => {
                             let mut s = args[1..].join(" ").to_owned();
                             if !s.is_empty() {
@@ -156,30 +160,22 @@ fn execute_command(command_buf: &str, ctx: &mut Context) {
                 }
                 let _ = ctx.fs.commit();
             }
-            None => kprintln!("overwrite <file> <text>"),
+            None => kprintln!("write|append <file> <text>"),
         },
-        "append" => match args.first() {
+        "rm" | "rmr" => match args.first() {
             Some(path) => {
                 let mut wd = ctx.wd.clone();
                 wd.cd(path);
                 match wd.get_file(&ctx.fs) {
-                    Some(mut file) => match file.appender() {
-                        Some(mut writer) => {
-                            let mut s = args[1..].join(" ").to_owned();
-                            if !s.is_empty() {
-                                s.push('\n');
-                            }
-                            if let Err(e) = writer.write(s.as_bytes()) {
-                                kprintln!("Write error: {}", e);
-                            }
-                        }
-                        None => kprintln!("This is a directory: {}", wd),
+                    Some(file) => match file.remove(command == "rmr") {
+                        Ok(_) => {}
+                        Err(e) => kprintln!("Failed to remove {}: {}", wd, e),
                     },
                     None => kprintln!("File not found: {}", wd),
                 }
                 let _ = ctx.fs.commit();
             }
-            None => kprintln!("append <file> <text>"),
+            None => kprintln!("rm|rmr <file>"),
         },
         "memstats" => {
             kprintln!("[phys_memory]");
