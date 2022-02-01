@@ -2,10 +2,9 @@
 
 use super::volume::{Sector, Volume, VolumeError};
 use alloc::string::String;
-use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
-use dir_entry::{DirEntry, SfnEntry};
+use dir_entry::{DirEntry, LfnReader, ReadLfnResult, SfnEntry};
 use fat_entry::FatEntry;
 use low_level::{BufferedCluster, Cluster, DirEntries, Root};
 
@@ -30,6 +29,8 @@ pub enum Error {
     BootSector(BootSectorError),
     Full,
     DirectoryNotEmpty,
+    FileAlreadyExists,
+    InvalidFileName,
 }
 
 impl From<VolumeError> for Error {
@@ -51,6 +52,8 @@ impl fmt::Display for Error {
             Self::BootSector(e) => write!(f, "{}", e),
             Self::Full => write!(f, "Full"),
             Self::DirectoryNotEmpty => write!(f, "Directory not empty"),
+            Self::FileAlreadyExists => write!(f, "File with the same name already exists"),
+            Self::InvalidFileName => write!(f, "Invalid file name"),
         }
     }
 }
@@ -95,9 +98,55 @@ impl<'a, V: Volume> Dir<'a, V> {
     pub fn files(&self) -> DirIter<'a, V> {
         DirIter {
             root: self.root,
-            cluster: self.cluster,
+            dir: self.cluster,
             inner: self.root.dir_entries(self.cluster),
         }
+    }
+
+    fn insert_dir_entries(
+        &self,
+        entries: impl ExactSizeIterator<Item = DirEntry>,
+    ) -> Result<(), Error> {
+        let required_len = entries.len();
+        if required_len == 0 {
+            return Ok(());
+        }
+        let mut writable_start = (self.cluster, 0);
+        let mut writable_len = 0;
+        for (c, n, entry) in self.root.dir_entries(self.cluster) {
+            match entry {
+                DirEntry::Unused => {
+                    if writable_len == 0 {
+                        writable_start = (c, n);
+                    }
+                    writable_len += 1;
+                    if writable_len == required_len {
+                        // Found a enough writable space (starting at writable_start) for entries
+                        break;
+                    }
+                }
+                DirEntry::UnusedTerminal => {
+                    if writable_len == 0 {
+                        writable_start = (c, n);
+                    }
+                    // We don't have a enough space (writable_len != required_len) for entries
+                    break;
+                }
+                _ => writable_len = 0,
+            }
+        }
+        let terminal = (writable_len != required_len).then(|| DirEntry::UnusedTerminal);
+        let (c, mut n) = writable_start;
+        let mut c = self.root.cluster(c);
+        for entry in entries.chain(terminal) {
+            if c.dir_entries_count() <= n {
+                c = self.root.chained_cluster(c.cluster()).prepare()?;
+                n = 0;
+            }
+            c.write_dir_entry(n, entry)?;
+            n += 1;
+        }
+        Ok(())
     }
 
     // TODO: create_file(..), create_dir(..)
@@ -106,86 +155,33 @@ impl<'a, V: Volume> Dir<'a, V> {
 #[derive(Debug)]
 pub struct DirIter<'a, V> {
     root: &'a Root<V>,
-    cluster: Cluster,
+    dir: Cluster,
     inner: DirEntries<'a, V>,
-}
-
-impl<'a, V: Volume> DirIter<'a, V> {
-    fn handle_entry(&mut self, (c, n, entry): (Cluster, usize, DirEntry)) -> Option<File<'a, V>> {
-        match entry {
-            DirEntry::UnusedTerminal => None,
-            DirEntry::Unused => self.next(),
-            DirEntry::Lfn(lfn) if lfn.is_last_entry() => {
-                let checksum = lfn.checksum();
-                let mut order = lfn.order();
-                let mut name_buf = vec![0; order * 13];
-
-                order -= 1;
-                lfn.put_name_parts_into(&mut name_buf[order * 13..]);
-
-                // Attempt to read `order` LFN entries and a SFN entry.
-                // NOTE: In this implementation, broken LFNs are basically ignored by calling `handle_entry` recursively.
-
-                // `order` LFN entries:
-                while order != 0 {
-                    let next @ (_, _, entry) = self.inner.next()?;
-                    match entry {
-                        DirEntry::Lfn(lfn)
-                            if lfn.checksum() == checksum && lfn.order() == order =>
-                        {
-                            order -= 1;
-                            lfn.put_name_parts_into(&mut name_buf[order * 13..]);
-                        }
-                        _ => return self.handle_entry(next),
-                    }
-                }
-
-                // a SFN entry:
-                let next @ (lc, ln, entry) = self.inner.next()?;
-                match entry {
-                    DirEntry::Sfn(sfn) if sfn.checksum() == checksum => {
-                        // LFN is 0x0000-terminated and padded with 0xffff
-                        while matches!(name_buf.last(), Some(0xffff)) {
-                            name_buf.pop();
-                        }
-                        if matches!(name_buf.last(), Some(0x0000)) {
-                            name_buf.pop();
-                        }
-                        let name = String::from_utf16_lossy(name_buf.as_slice());
-                        Some(File {
-                            root: self.root,
-                            dir: self.cluster,
-                            name,
-                            entry_location: (c, n),
-                            last_entry: (sfn, lc, ln),
-                        })
-                    }
-                    // failback
-                    _ => return self.handle_entry(next),
-                }
-            }
-            DirEntry::Lfn(_) => self.next(),
-            DirEntry::Sfn(sfn) if sfn.is_volume_id() => self.next(),
-            DirEntry::Sfn(sfn) => {
-                let (_, name) = sfn.name();
-                Some(File {
-                    root: self.root,
-                    dir: self.cluster,
-                    name,
-                    entry_location: (c, n),
-                    last_entry: (sfn, c, n),
-                })
-            }
-        }
-    }
 }
 
 impl<'a, V: Volume> Iterator for DirIter<'a, V> {
     type Item = File<'a, V>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let next = self.inner.next()?;
-        self.handle_entry(next)
+        let mut reader = LfnReader::Init;
+        let (mut sc, mut sn, mut entry) = self.inner.next()?;
+        let (mut ec, mut en) = (sc, sn);
+        let (name, sfn) = loop {
+            match reader.read(entry) {
+                ReadLfnResult::Meta(DirEntry::UnusedTerminal) => return None,
+                ReadLfnResult::Meta(_) => return self.next(),
+                ReadLfnResult::Incomplete => (ec, en, entry) = self.inner.next()?,
+                ReadLfnResult::Complete(name, sfn) => break (name, sfn),
+                ReadLfnResult::Broken(_, e) => (sc, sn, entry) = (ec, en, e),
+            }
+        };
+        Some(File {
+            root: self.root,
+            dir: self.dir,
+            name,
+            entry_location: (sc, sn),
+            last_entry: (sfn, ec, en),
+        })
     }
 }
 
@@ -205,6 +201,13 @@ impl<'a, V: Volume> File<'a, V> {
         self.root
             .cluster(c)
             .write_dir_entry(n, DirEntry::Sfn(entry))
+    }
+
+    fn dir(&self) -> Dir<'a, V> {
+        Dir {
+            root: self.root,
+            cluster: self.dir,
+        }
     }
 
     pub fn name(&self) -> &str {
@@ -253,13 +256,31 @@ impl<'a, V: Volume> File<'a, V> {
         self.write_back()
     }
 
-    fn cluster(&self) -> Option<Cluster> {
-        self.last_entry.0.cluster()
+    // cluster, prepare_cluster, and release_cluster correspond to low_level::ChainedCluster methods
+
+    fn cluster(&self) -> Option<BufferedCluster<'a, V>> {
+        self.last_entry.0.cluster().map(|c| self.root.cluster(c))
     }
 
-    fn set_cluster(&mut self, cluster: Option<Cluster>) -> Result<(), Error> {
-        self.last_entry.0.set_cluster(cluster);
-        self.write_back()
+    fn prepare_cluster(&mut self) -> Result<BufferedCluster<'a, V>, Error> {
+        match self.last_entry.0.cluster() {
+            Some(c) => Ok(self.root.cluster(c)),
+            None => {
+                let c = self.root.fat().allocate()?;
+                self.last_entry.0.set_cluster(Some(c));
+                self.write_back()?;
+                Ok(self.root.cluster(c))
+            }
+        }
+    }
+
+    fn release_cluster(&mut self) -> Result<(), Error> {
+        if let Some(c) = self.last_entry.0.cluster() {
+            self.last_entry.0.set_cluster(None);
+            self.write_back()?;
+            self.root.fat().release(c)?;
+        }
+        Ok(())
     }
 
     pub fn reader(&self) -> Option<FileReader<V>> {
@@ -269,7 +290,7 @@ impl<'a, V: Volume> File<'a, V> {
             Some(FileReader {
                 root: self.root,
                 rest_size: self.file_size(),
-                cursor: self.cluster().map(|c| (self.root.cluster(c), 0)),
+                cursor: self.cluster().map(|c| (c, 0)),
             })
         }
     }
@@ -290,25 +311,23 @@ impl<'a, V: Volume> File<'a, V> {
         if self.is_dir() {
             None
         } else {
+            // Same as overwriter except the cursor is at the end of self.cluster()
             let mut total_size = 0;
-            let cursor = if let Some(c) = self.cluster() {
-                let mut c = self.root.cluster(c);
+            let cursor = self.cluster().map(|mut c| {
                 let mut rest_size = self.file_size();
                 while c.size() < rest_size {
-                    match self.root.fat().read(c.cluster()).map(|f| f.chain()) {
+                    match self.root.chained_cluster(c.cluster()).get() {
                         Ok(Some(next_c)) => {
                             total_size += c.size();
                             rest_size -= c.size();
-                            c = self.root.cluster(next_c);
+                            c = next_c;
                         }
                         _ => rest_size = c.size(), // FIXME: How should we handle the broken cluster chain?
                     }
                 }
                 total_size += rest_size;
-                Some((c, rest_size))
-            } else {
-                None
-            };
+                (c, rest_size)
+            });
             Some(FileWriter {
                 file: self,
                 total_size,
@@ -317,26 +336,15 @@ impl<'a, V: Volume> File<'a, V> {
         }
     }
 
-    pub fn remove(self, recursive: bool) -> Result<(), Error> {
-        if let Some(dir) = self.as_dir() {
-            for file in dir.files() {
-                if !matches!(file.name(), "." | "..") {
-                    if recursive {
-                        file.remove(true)?;
-                    } else {
-                        Err(Error::DirectoryNotEmpty)?;
-                    }
-                }
-            }
-        } else if let Some(c) = self.cluster() {
-            self.root.fat().release(c)?;
-        }
-
+    fn dir_entry_locations(
+        &self,
+    ) -> impl Iterator<Item = (BufferedCluster<'a, V>, usize, usize)> + 'a {
         let (start_c, start_offset) = self.entry_location;
         let (_, end_c, end_offset) = self.last_entry;
-        let mut c = self.root.cluster(start_c);
-
-        loop {
+        let mut next_c = Some(self.root.cluster(start_c));
+        let root = self.root;
+        core::iter::from_fn(move || {
+            let c = core::mem::take(&mut next_c)?;
             let i = match c.cluster() == start_c {
                 true => start_offset,
                 false => 0,
@@ -345,21 +353,67 @@ impl<'a, V: Volume> File<'a, V> {
                 true => end_offset,
                 false => c.dir_entries_count() - 1,
             };
+            next_c = if c.cluster() == end_c {
+                None
+            } else {
+                root.chained_cluster(c.cluster()).get().ok().flatten()
+            };
+            Some((c, i, j))
+        })
+    }
+
+    pub fn remove(mut self, recursive: bool) -> Result<(), Error> {
+        if let Some(dir) = self.as_dir() {
+            for file in dir.files().filter(|f| !matches!(f.name(), "." | "..")) {
+                if recursive {
+                    file.remove(true)?;
+                } else {
+                    Err(Error::DirectoryNotEmpty)?;
+                }
+            }
+        }
+        self.release_cluster()?;
+
+        for (mut c, i, j) in self.dir_entry_locations() {
             for offset in i..=j {
                 c.write_dir_entry(offset, DirEntry::Unused)?;
-            }
-            if c.cluster() == end_c {
-                break;
-            }
-            match self.root.fat().read(c.cluster())?.chain() {
-                Some(next_c) => c = self.root.cluster(next_c),
-                None => break, // TODO: How should we handle the broken cluster chain?
             }
         }
         Ok(())
     }
 
-    // TODO: move()
+    pub fn mv(self, dir: Option<Dir<'a, V>>, name: Option<&str>) -> Result<(), Error> {
+        let (name, dir, entries) = match name {
+            Some(name) if name != self.name => {
+                let dir = dir.unwrap_or_else(|| self.dir());
+                let entries = DirEntry::lfn_sequence(name, self.last_entry.0)
+                    .ok_or(Error::InvalidFileName)?;
+                (name, dir, entries)
+            }
+            _ => {
+                let dir = match dir {
+                    Some(dir) if dir.cluster != self.dir => dir,
+                    _ => return Ok(()),
+                };
+                // Since there is no name change, just move the DirEntry sequence
+                let entries = self
+                    .dir_entry_locations()
+                    .flat_map(|(mut c, i, j)| (i..=j).map(move |offset| c.read_dir_entry(offset)))
+                    .collect::<Result<Vec<_>, _>>()?;
+                (self.name.as_str(), dir, entries)
+            }
+        };
+        // FIXME: We also need to check SFN name conflict
+        if dir.files().any(|f| f.name() == name) {
+            Err(Error::FileAlreadyExists)?;
+        }
+        for (mut c, i, j) in self.dir_entry_locations() {
+            for offset in i..=j {
+                c.write_dir_entry(offset, DirEntry::Unused)?;
+            }
+        }
+        dir.insert_dir_entries(entries.into_iter())
+    }
 }
 
 #[derive(Debug)]
@@ -383,14 +437,14 @@ impl<'a, V: Volume> FileReader<'a, V> {
             total_read += l;
             self.rest_size -= l;
 
-            self.cursor = Some(if l == c.size() - offset {
-                match self.root.fat().read(c.cluster())?.chain() {
-                    Some(c) => (self.root.cluster(c), 0),
-                    None => break,
-                }
+            self.cursor = if l == c.size() - offset {
+                self.root
+                    .chained_cluster(c.cluster())
+                    .get()?
+                    .map(|c| (c, 0))
             } else {
-                (c, offset + l)
-            });
+                Some((c, offset + l))
+            };
         }
         Ok(total_read)
     }
@@ -419,25 +473,8 @@ impl<'a, V: Volume> FileWriter<'a, V> {
         while !buf.is_empty() {
             let (mut c, offset) = match core::mem::take(&mut self.cursor) {
                 Some((c, offset)) if offset < c.size() => (c, offset),
-                Some((c, _)) => {
-                    let prev_c = c.cluster();
-                    match self.file.root.fat().read(prev_c)?.chain() {
-                        Some(c) => (self.file.root.cluster(c), 0), // recycle
-                        None => {
-                            let c = self.file.root.fat().allocate()?;
-                            self.file.root.fat().write(prev_c, c.into())?; // FAT[prev_c] -> c
-                            (self.file.root.cluster(c), 0)
-                        }
-                    }
-                }
-                None => match self.file.cluster() {
-                    Some(c) => (self.file.root.cluster(c), 0), // recycle
-                    None => {
-                        let c = self.file.root.fat().allocate()?;
-                        let _ = self.file.set_cluster(Some(c)); // file.cluster -> c
-                        (self.file.root.cluster(c), 0)
-                    }
-                },
+                Some((c, _)) => (self.file.root.chained_cluster(c.cluster()).prepare()?, 0),
+                None => (self.file.prepare_cluster()?, 0),
             };
             let l = buf.len().min(c.size() - offset);
             c.write(offset, &buf[0..l])?;
@@ -451,21 +488,10 @@ impl<'a, V: Volume> FileWriter<'a, V> {
 
 impl<'a, V: Volume> Drop for FileWriter<'a, V> {
     fn drop(&mut self) {
-        match self.cursor {
-            Some((ref c, _)) => {
-                let last_c = c.cluster();
-                if let Ok(FatEntry::UsedChained(c)) = self.file.root.fat().read(last_c) {
-                    let _ = self.file.root.fat().write(last_c, FatEntry::UsedEoc); // FAT[last_c] -x-> c
-                    let _ = self.file.root.fat().release(c);
-                }
-            }
-            None => {
-                if let Some(c) = self.file.cluster() {
-                    let _ = self.file.set_cluster(None); // file.cluster -x-> c
-                    let _ = self.file.root.fat().release(c);
-                }
-            }
-        }
+        let _ = match self.cursor {
+            Some((ref c, _)) => self.file.root.chained_cluster(c.cluster()).release(),
+            None => self.file.release_cluster(),
+        };
         let _ = self.file.set_file_size(self.total_size); // TODO: Handle error
     }
 }

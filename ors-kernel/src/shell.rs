@@ -94,11 +94,10 @@ fn execute_command(command_buf: &str, ctx: &mut Context) {
         "pwd" => kprintln!("{}", ctx.wd),
         "cd" => match args.first() {
             Some(path) => {
-                let mut wd = ctx.wd.clone();
-                wd.cd(path);
-                match wd.get_dir(&ctx.fs) {
-                    Some(_) => ctx.wd = wd,
-                    None => kprintln!("Not a directory: {}", wd),
+                let path = ctx.wd.joined(path);
+                match path.get_dir(&ctx.fs) {
+                    Some(_) => ctx.wd = path,
+                    None => kprintln!("Not a directory: {}", path),
                 }
             }
             None => ctx.wd.parts.clear(),
@@ -117,9 +116,8 @@ fn execute_command(command_buf: &str, ctx: &mut Context) {
         },
         "read" => match args.first() {
             Some(path) => {
-                let mut wd = ctx.wd.clone();
-                wd.cd(path);
-                match wd.get_file(&ctx.fs) {
+                let path = ctx.wd.joined(path);
+                match path.get_file(&ctx.fs) {
                     Some(file) => match file.reader() {
                         Some(reader) => match reader.read_to_end() {
                             Ok(buf) => match String::from_utf8(buf) {
@@ -128,18 +126,17 @@ fn execute_command(command_buf: &str, ctx: &mut Context) {
                             },
                             Err(e) => kprintln!("Read error: {}", e),
                         },
-                        None => kprintln!("This is a directory: {}", wd),
+                        None => kprintln!("This is a directory: {}", path),
                     },
-                    None => kprintln!("File not found: {}", wd),
+                    None => kprintln!("File not found: {}", path),
                 }
             }
             None => kprintln!("read <file>"),
         },
         "write" | "append" => match args.first() {
             Some(path) => {
-                let mut wd = ctx.wd.clone();
-                wd.cd(path);
-                match wd.get_file(&ctx.fs) {
+                let path = ctx.wd.joined(path);
+                match path.get_file(&ctx.fs) {
                     Some(mut file) => match if command == "write" {
                         file.overwriter()
                     } else {
@@ -154,9 +151,9 @@ fn execute_command(command_buf: &str, ctx: &mut Context) {
                                 kprintln!("Write error: {}", e);
                             }
                         }
-                        None => kprintln!("This is a directory: {}", wd),
+                        None => kprintln!("This is a directory: {}", path),
                     },
-                    None => kprintln!("File not found: {}", wd),
+                    None => kprintln!("File not found: {}", path),
                 }
                 let _ = ctx.fs.commit();
             }
@@ -164,18 +161,51 @@ fn execute_command(command_buf: &str, ctx: &mut Context) {
         },
         "rm" | "rmr" => match args.first() {
             Some(path) => {
-                let mut wd = ctx.wd.clone();
-                wd.cd(path);
-                match wd.get_file(&ctx.fs) {
+                let path = ctx.wd.joined(path);
+                match path.get_file(&ctx.fs) {
                     Some(file) => match file.remove(command == "rmr") {
                         Ok(_) => {}
-                        Err(e) => kprintln!("Failed to remove {}: {}", wd, e),
+                        Err(e) => kprintln!("Failed to remove {}: {}", path, e),
                     },
-                    None => kprintln!("File not found: {}", wd),
+                    None => kprintln!("File not found: {}", path),
                 }
                 let _ = ctx.fs.commit();
             }
             None => kprintln!("rm|rmr <file>"),
+        },
+        "mv" => match &args[..] {
+            [src, dest] => {
+                let src = ctx.wd.joined(src);
+                let dest = ctx.wd.joined(dest);
+                match src.get_file(&ctx.fs) {
+                    Some(src) => match dest.get_dir(&ctx.fs) {
+                        Some(dest) => match src.mv(Some(dest), None) {
+                            Ok(_) => {}
+                            Err(e) => kprintln!("Failed to move file: {}", e),
+                        },
+                        None => match dest.get_file(&ctx.fs) {
+                            Some(_) => kprintln!("File already exists: {}", dest),
+                            None => {
+                                let (dest_dir, file_name) = dest.dir_and_file_name().unwrap();
+                                match dest_dir.get_dir(&ctx.fs) {
+                                    Some(dest_dir) => {
+                                        match src.mv(Some(dest_dir), Some(file_name.as_str())) {
+                                            Ok(_) => {}
+                                            Err(e) => kprintln!("Failed to move file: {}", e),
+                                        }
+                                    }
+                                    None => {
+                                        kprintln!("Destination directory not found: {}", dest_dir);
+                                    }
+                                }
+                            }
+                        },
+                    },
+                    None => kprintln!("Source file not found: {}", src),
+                }
+                let _ = ctx.fs.commit();
+            }
+            _ => kprintln!("mv <src> <dest>"),
         },
         "memstats" => {
             kprintln!("[phys_memory]");
@@ -279,7 +309,13 @@ impl Path {
         Self { parts: Vec::new() }
     }
 
-    fn cd(&mut self, path: &str) {
+    fn joined(&self, path: &str) -> Self {
+        let mut p = self.clone();
+        p.join(path);
+        p
+    }
+
+    fn join(&mut self, path: &str) {
         for p in path.split('/') {
             match p {
                 ".." => {
@@ -289,6 +325,11 @@ impl Path {
                 p => self.parts.push(p.to_owned()),
             }
         }
+    }
+
+    fn dir_and_file_name(mut self) -> Option<(Path, String)> {
+        let file_name = self.parts.pop()?;
+        Some((self, file_name))
     }
 
     fn get_dir<'a>(

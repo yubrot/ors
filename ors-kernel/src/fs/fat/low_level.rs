@@ -79,6 +79,13 @@ impl<V: Volume> Root<V> {
         }
     }
 
+    pub(super) fn chained_cluster(&self, cluster: Cluster) -> ChainedCluster<V> {
+        ChainedCluster {
+            root: self,
+            src: cluster,
+        }
+    }
+
     pub(super) fn dir_entries(&self, cluster: Cluster) -> DirEntries<V> {
         DirEntries {
             root: self,
@@ -234,6 +241,8 @@ impl<'a, V: Volume> BufferedCluster<'a, V> {
         Ok(())
     }
 
+    // for directory
+
     pub(super) fn dir_entries_count(&self) -> usize {
         self.size() / DirEntry::SIZE
     }
@@ -247,6 +256,41 @@ impl<'a, V: Volume> BufferedCluster<'a, V> {
     pub(super) fn write_dir_entry(&mut self, index: usize, entry: DirEntry) -> Result<(), Error> {
         let buf: [u8; 32] = entry.into();
         self.write(index * DirEntry::SIZE, buf.as_ref())
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct ChainedCluster<'a, V> {
+    root: &'a Root<V>,
+    src: Cluster,
+}
+
+impl<'a, V: Volume> ChainedCluster<'a, V> {
+    fn read(&self) -> Result<Option<Cluster>, Error> {
+        Ok(self.root.fat().read(self.src)?.chain())
+    }
+
+    pub(super) fn get(self) -> Result<Option<BufferedCluster<'a, V>>, Error> {
+        Ok(self.read()?.map(|c| self.root.cluster(c)))
+    }
+
+    pub(super) fn prepare(self) -> Result<BufferedCluster<'a, V>, Error> {
+        match self.read()? {
+            Some(c) => Ok(self.root.cluster(c)),
+            None => {
+                let c = self.root.fat().allocate()?;
+                self.root.fat().write(self.src, c.into())?;
+                Ok(self.root.cluster(c))
+            }
+        }
+    }
+
+    pub(super) fn release(self) -> Result<(), Error> {
+        if let Some(c) = self.read()? {
+            self.root.fat().write(self.src, FatEntry::Unused)?;
+            self.root.fat().release(c)?;
+        }
+        Ok(())
     }
 }
 

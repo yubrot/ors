@@ -1,5 +1,7 @@
 use super::{Cluster, SliceExt};
 use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
 
 /// Deserialized Directory entry.
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
@@ -12,6 +14,34 @@ pub(super) enum DirEntry {
 
 impl DirEntry {
     pub(super) const SIZE: usize = 32;
+
+    pub(super) fn lfn_sequence(name: &str, mut sfn: SfnEntry) -> Option<Vec<DirEntry>> {
+        if sfn.set_name(name) {
+            Some(vec![Self::Sfn(sfn)])
+        } else if name.chars().all(LfnEntry::is_lfn_compatible_char) {
+            let mut buf = name.encode_utf16().collect::<Vec<_>>();
+            if 255 < buf.len() {
+                return None;
+            }
+            let padding = (13 - buf.len() % 13) % 13;
+            for i in 0..padding {
+                buf.push(if i == 0 { 0x0000 } else { 0xffff });
+            }
+            let checksum = sfn.checksum(); // FIXME: Generate SFN from name
+            let num_lfn = buf.len() / 13;
+            let mut entries = vec![DirEntry::Unused; num_lfn + 1];
+            entries[num_lfn] = DirEntry::Sfn(sfn);
+            for i in 0..num_lfn {
+                let order = num_lfn - i;
+                let mut lfn = LfnEntry::new(order, i == 0, checksum);
+                lfn.write_name_parts(&buf[(order - 1) * 13..order * 13]);
+                entries[i] = DirEntry::Lfn(lfn);
+            }
+            Some(entries)
+        } else {
+            None
+        }
+    }
 
     const READ_ONLY: u8 = 0x01;
     const HIDDEN: u8 = 0x02;
@@ -73,6 +103,9 @@ pub(super) struct SfnEntry {
 }
 
 impl SfnEntry {
+    const BASE_LOWER: u8 = 0x08;
+    const EXT_LOWER: u8 = 0x10;
+
     pub(super) fn name(&self) -> (bool, String) {
         let mut is_irreversible = false;
         let mut dest = String::with_capacity(12);
@@ -90,12 +123,71 @@ impl SfnEntry {
                 });
             }
         };
-        put(&self.name[0..8], (self.nt_res & 0x08) == 0x08);
+        put(
+            &self.name[0..8],
+            (self.nt_res & Self::BASE_LOWER) == Self::BASE_LOWER,
+        );
         if self.name[8] != 32 {
             put(&['.' as u8], false);
         }
-        put(&self.name[8..11], (self.nt_res & 0x10) == 0x10);
+        put(
+            &self.name[8..11],
+            (self.nt_res & Self::EXT_LOWER) == Self::EXT_LOWER,
+        );
         (is_irreversible, dest)
+    }
+
+    pub(super) fn set_name(&mut self, name: &str) -> bool {
+        let (base, ext) = match name.find('.') {
+            Some(index) => {
+                let base = &name[0..index];
+                let ext = &name[index + 1..];
+                if !matches!(base.len(), 1..=8) || !matches!(ext.len(), 1..=3) {
+                    return false;
+                }
+                (base, ext)
+            }
+            None => {
+                if !matches!(name.len(), 1..=8) {
+                    return false;
+                }
+                (name, "")
+            }
+        };
+        let base_contains_lower = base.chars().any(|c| c.is_ascii_lowercase());
+        let base_contains_upper = base.chars().any(|c| c.is_ascii_uppercase());
+        let ext_contains_lower = ext.chars().any(|c| c.is_ascii_lowercase());
+        let ext_contains_upper = ext.chars().any(|c| c.is_ascii_uppercase());
+        if !base.chars().all(Self::is_sfn_compatible_char)
+            || !ext.chars().all(Self::is_sfn_compatible_char)
+            || (base_contains_lower && base_contains_upper)
+            || (ext_contains_lower && ext_contains_upper)
+        {
+            return false;
+        }
+        for (i, c) in base.chars().enumerate() {
+            self.name[i] = c.to_ascii_uppercase() as u8;
+        }
+        for i in base.len()..8 {
+            self.name[i] = ' ' as u8;
+        }
+        for (i, c) in ext.chars().enumerate() {
+            self.name[i + 8] = c.to_ascii_uppercase() as u8;
+        }
+        for i in ext.len()..3 {
+            self.name[i + 8] = ' ' as u8;
+        }
+        if base_contains_lower {
+            self.nt_res |= Self::BASE_LOWER;
+        } else {
+            self.nt_res &= !Self::BASE_LOWER;
+        }
+        if ext_contains_lower {
+            self.nt_res |= Self::EXT_LOWER;
+        } else {
+            self.nt_res &= !Self::EXT_LOWER;
+        }
+        true
     }
 
     pub(super) fn cluster(&self) -> Option<Cluster> {
@@ -146,6 +238,9 @@ impl SfnEntry {
         })
     }
 
+    // TODO: Support create_datetime, last_access_date
+    // FIXME: Support update_datetime (it is mandatory)
+
     pub(super) fn file_size(&self) -> usize {
         self.file_size as usize
     }
@@ -153,6 +248,10 @@ impl SfnEntry {
     pub(super) fn set_file_size(&mut self, size: usize) {
         assert!(size <= u32::MAX as usize);
         self.file_size = size as u32;
+    }
+
+    fn is_sfn_compatible_char(c: char) -> bool {
+        matches!(c, '0'..='9' | 'A'..='Z' | 'a'..='z' | '!' | '#' | '$' | '%' | '&' | '\'' | '(' | ')' | '-' | '@' | '^' | '_' | '`' | '{' | '}' | '~')
     }
 }
 
@@ -229,7 +328,35 @@ pub(super) struct LfnEntry {
 impl LfnEntry {
     const LAST_LONG_ENTRY: u8 = 0x40;
 
-    pub(super) fn put_name_parts_into(&self, buf: &mut [u16]) {
+    pub(super) fn new(order: usize, last: bool, chksum: u8) -> Self {
+        assert!(1 <= order && order <= 20);
+        Self {
+            ord: (order as u8) | (if last { Self::LAST_LONG_ENTRY } else { 0 }),
+            name1: [0; 10],
+            attr: DirEntry::LONG_FILE_NAME,
+            ty: 0,
+            chksum,
+            name2: [0; 12],
+            _fst_clus_lo: 0,
+            name3: [0; 4],
+        }
+    }
+
+    pub(super) fn write_name_parts(&mut self, buf: &[u16]) {
+        debug_assert_eq!(buf.len(), 13);
+        for i in 0..13 {
+            let bytes = buf[i].to_le_bytes();
+            match i {
+                0..=4 => self.name1.copy_from_array::<2>(i * 2, bytes),
+                5..=10 => self.name2.copy_from_array::<2>((i - 5) * 2, bytes),
+                11..=12 => self.name3.copy_from_array::<2>((i - 11) * 2, bytes),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    pub(super) fn read_name_parts(&self, buf: &mut [u16]) {
+        debug_assert_eq!(buf.len(), 13);
         for i in 0..13 {
             buf[i] = u16::from_le_bytes(match i {
                 0..=4 => self.name1.array::<2>(i * 2),
@@ -251,6 +378,10 @@ impl LfnEntry {
 
     pub(super) fn checksum(&self) -> u8 {
         self.chksum
+    }
+
+    fn is_lfn_compatible_char(c: char) -> bool {
+        !matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
     }
 }
 
@@ -295,5 +426,61 @@ impl Into<[u8; 32]> for LfnEntry {
         buf.copy_from_array(14, self.name2);
         buf.copy_from_array(28, self.name3);
         buf
+    }
+}
+
+#[derive(Debug)]
+pub(super) enum LfnReader {
+    Init,
+    LfnSequence(u8, usize, Vec<u16>),
+}
+
+#[derive(Debug)]
+pub(super) enum ReadLfnResult {
+    Meta(DirEntry),
+    Complete(String, SfnEntry),
+    Incomplete,
+    Broken(LfnReader, DirEntry),
+}
+
+impl LfnReader {
+    pub(super) fn read(&mut self, e: DirEntry) -> ReadLfnResult {
+        match (core::mem::replace(self, Self::Init), e) {
+            (Self::Init, DirEntry::Lfn(lfn)) if lfn.is_last_entry() => {
+                let checksum = lfn.checksum();
+                let order = lfn.order();
+                let mut buf = vec![0; order * 13];
+                lfn.read_name_parts(&mut buf[(order - 1) * 13..order * 13]);
+                *self = Self::LfnSequence(checksum, order - 1, buf);
+                ReadLfnResult::Incomplete
+            }
+            (Self::Init, e @ DirEntry::Lfn(_)) => ReadLfnResult::Broken(Self::Init, e),
+            (Self::Init, DirEntry::Sfn(sfn)) if !sfn.is_volume_id() => {
+                let (_, name) = sfn.name();
+                ReadLfnResult::Complete(name, sfn)
+            }
+            (Self::Init, e) => ReadLfnResult::Meta(e),
+            (Self::LfnSequence(checksum, order, mut buf), DirEntry::Lfn(lfn))
+                if order == lfn.order() && checksum == lfn.checksum() =>
+            {
+                lfn.read_name_parts(&mut buf[(order - 1) * 13..order * 13]);
+                *self = Self::LfnSequence(checksum, order - 1, buf);
+                ReadLfnResult::Incomplete
+            }
+            (Self::LfnSequence(checksum, order, mut buf), DirEntry::Sfn(sfn))
+                if order == 0 && checksum == sfn.checksum() =>
+            {
+                // LFN is 0x0000-terminated and padded with 0xffff
+                while matches!(buf.last(), Some(0xffff)) {
+                    buf.pop();
+                }
+                if matches!(buf.last(), Some(0x0000)) {
+                    buf.pop();
+                }
+                let name = String::from_utf16_lossy(buf.as_slice());
+                ReadLfnResult::Complete(name, sfn)
+            }
+            (state @ Self::LfnSequence(..), e) => ReadLfnResult::Broken(state, e),
+        }
     }
 }
