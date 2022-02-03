@@ -16,7 +16,7 @@ impl DirEntry {
     pub(super) const SIZE: usize = 32;
 
     pub(super) fn lfn_sequence(name: &str, mut sfn: SfnEntry) -> Option<Vec<DirEntry>> {
-        if sfn.set_name(name) {
+        if sfn.set_or_generate_name(name) {
             Some(vec![Self::Sfn(sfn)])
         } else if name.chars().all(LfnEntry::is_lfn_compatible_char) {
             let mut buf = name.encode_utf16().collect::<Vec<_>>();
@@ -27,7 +27,7 @@ impl DirEntry {
             for i in 0..padding {
                 buf.push(if i == 0 { 0x0000 } else { 0xffff });
             }
-            let checksum = sfn.checksum(); // FIXME: Generate SFN from name
+            let checksum = sfn.checksum();
             let num_lfn = buf.len() / 13;
             let mut entries = vec![DirEntry::Unused; num_lfn + 1];
             entries[num_lfn] = DirEntry::Sfn(sfn);
@@ -106,6 +106,39 @@ impl SfnEntry {
     const BASE_LOWER: u8 = 0x08;
     const EXT_LOWER: u8 = 0x10;
 
+    pub(super) fn new() -> Self {
+        Self {
+            name: [b' '; 11],
+            attr: 0,
+            nt_res: 0,
+            crt_time_tenth: 0,
+            crt_time: 0,
+            crt_date: 0,
+            lst_acc_date: 0,
+            fst_clus_hi: 0,
+            wrt_time: 0,
+            wrt_date: 0,
+            fst_clus_lo: 0,
+            file_size: 0,
+        }
+    }
+
+    pub(super) fn current(c: Option<Cluster>) -> SfnEntry {
+        let mut entry = Self::new();
+        entry.name = *b".          ";
+        entry.set_is_directory(true);
+        entry.set_cluster(c);
+        entry
+    }
+
+    pub(super) fn parent(c: Option<Cluster>) -> SfnEntry {
+        let mut entry = Self::new();
+        entry.name = *b"..         ";
+        entry.set_is_directory(true);
+        entry.set_cluster(c);
+        entry
+    }
+
     pub(super) fn name(&self) -> (bool, String) {
         let mut is_irreversible = false;
         let mut dest = String::with_capacity(12);
@@ -128,13 +161,32 @@ impl SfnEntry {
             (self.nt_res & Self::BASE_LOWER) == Self::BASE_LOWER,
         );
         if self.name[8] != 32 {
-            put(&['.' as u8], false);
+            put(b".", false);
         }
         put(
             &self.name[8..11],
             (self.nt_res & Self::EXT_LOWER) == Self::EXT_LOWER,
         );
         (is_irreversible, dest)
+    }
+
+    pub(super) fn set_or_generate_name(&mut self, name: &str) -> bool {
+        let is_sfn_compatible = self.set_name(name);
+        if !is_sfn_compatible {
+            // FIXME: Avoid name collisions
+            for (i, c) in name
+                .chars()
+                .filter_map(|c| {
+                    Self::is_sfn_compatible_char(c).then(|| c.to_ascii_uppercase() as u8)
+                })
+                .chain(core::iter::repeat(' ' as u8))
+                .take(11)
+                .enumerate()
+            {
+                self.name[i] = c;
+            }
+        }
+        is_sfn_compatible
     }
 
     pub(super) fn set_name(&mut self, name: &str) -> bool {
@@ -222,6 +274,14 @@ impl SfnEntry {
 
     pub(super) fn is_directory(&self) -> bool {
         (self.attr & DirEntry::DIRECTORY) == DirEntry::DIRECTORY
+    }
+
+    pub(super) fn set_is_directory(&mut self, is_directory: bool) {
+        if is_directory {
+            self.attr |= DirEntry::DIRECTORY;
+        } else {
+            self.attr &= !DirEntry::DIRECTORY;
+        }
     }
 
     pub(super) fn archive(&self) -> bool {

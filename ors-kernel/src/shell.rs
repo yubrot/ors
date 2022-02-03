@@ -114,6 +114,36 @@ fn execute_command(command_buf: &str, ctx: &mut Context) {
             }
             None => kprintln!("Directory not found: {}", ctx.wd),
         },
+        "touch" => match args.first() {
+            Some(path) => match ctx.wd.joined(path).dir_and_file_name() {
+                Some((path, name)) => match path.get_dir(&ctx.fs) {
+                    Some(mut dir) => match dir.create_file(&name) {
+                        Ok(()) => {
+                            let _ = ctx.fs.commit();
+                        }
+                        Err(e) => kprintln!("Failed to create a file: {}", e),
+                    },
+                    None => kprintln!("Directory not found: {}", path),
+                },
+                None => kprintln!("This is a root directory"),
+            },
+            None => kprintln!("touch <path>"),
+        },
+        "mkdir" => match args.first() {
+            Some(path) => match ctx.wd.joined(path).dir_and_file_name() {
+                Some((path, name)) => match path.get_dir(&ctx.fs) {
+                    Some(mut dir) => match dir.create_dir(&name) {
+                        Ok(()) => {
+                            let _ = ctx.fs.commit();
+                        }
+                        Err(e) => kprintln!("Failed to create a directory: {}", e),
+                    },
+                    None => kprintln!("Directory not found: {}", path),
+                },
+                None => {}
+            },
+            None => kprintln!("mkdir <path>"),
+        },
         "read" => match args.first() {
             Some(path) => {
                 let path = ctx.wd.joined(path);
@@ -147,15 +177,18 @@ fn execute_command(command_buf: &str, ctx: &mut Context) {
                             if !s.is_empty() {
                                 s.push('\n');
                             }
-                            if let Err(e) = writer.write(s.as_bytes()) {
-                                kprintln!("Write error: {}", e);
+                            match writer.write(s.as_bytes()) {
+                                Ok(_) => {
+                                    drop(writer);
+                                    let _ = ctx.fs.commit();
+                                }
+                                Err(e) => kprintln!("Write error: {}", e),
                             }
                         }
                         None => kprintln!("This is a directory: {}", path),
                     },
                     None => kprintln!("File not found: {}", path),
                 }
-                let _ = ctx.fs.commit();
             }
             None => kprintln!("write|append <file> <text>"),
         },
@@ -164,12 +197,13 @@ fn execute_command(command_buf: &str, ctx: &mut Context) {
                 let path = ctx.wd.joined(path);
                 match path.get_file(&ctx.fs) {
                     Some(file) => match file.remove(command == "rmr") {
-                        Ok(_) => {}
+                        Ok(_) => {
+                            let _ = ctx.fs.commit();
+                        }
                         Err(e) => kprintln!("Failed to remove {}: {}", path, e),
                     },
                     None => kprintln!("File not found: {}", path),
                 }
-                let _ = ctx.fs.commit();
             }
             None => kprintln!("rm|rmr <file>"),
         },
@@ -180,7 +214,9 @@ fn execute_command(command_buf: &str, ctx: &mut Context) {
                 match src.get_file(&ctx.fs) {
                     Some(src) => match dest.get_dir(&ctx.fs) {
                         Some(dest) => match src.mv(Some(dest), None) {
-                            Ok(_) => {}
+                            Ok(_) => {
+                                let _ = ctx.fs.commit();
+                            }
                             Err(e) => kprintln!("Failed to move file: {}", e),
                         },
                         None => match dest.get_file(&ctx.fs) {
@@ -190,7 +226,9 @@ fn execute_command(command_buf: &str, ctx: &mut Context) {
                                 match dest_dir.get_dir(&ctx.fs) {
                                     Some(dest_dir) => {
                                         match src.mv(Some(dest_dir), Some(file_name.as_str())) {
-                                            Ok(_) => {}
+                                            Ok(_) => {
+                                                let _ = ctx.fs.commit();
+                                            }
                                             Err(e) => kprintln!("Failed to move file: {}", e),
                                         }
                                     }
@@ -203,7 +241,6 @@ fn execute_command(command_buf: &str, ctx: &mut Context) {
                     },
                     None => kprintln!("Source file not found: {}", src),
                 }
-                let _ = ctx.fs.commit();
             }
             _ => kprintln!("mv <src> <dest>"),
         },

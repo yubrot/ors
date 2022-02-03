@@ -103,8 +103,32 @@ impl<'a, V: Volume> Dir<'a, V> {
         }
     }
 
+    pub fn parent(&self) -> Result<Option<Dir<'a, V>>, Error> {
+        let root_dir_cluster = self.root.boot_sector().root_dir_cluster();
+        Ok(if self.cluster == root_dir_cluster {
+            None
+        } else {
+            match self.root.cluster(self.cluster).read_dir_entry(1)? {
+                DirEntry::Sfn(sfn) => Some(Dir {
+                    root: self.root,
+                    cluster: sfn.cluster().unwrap_or(root_dir_cluster),
+                }),
+                _ => None, // TODO: How should we handle the broken directory
+            }
+        })
+    }
+
+    fn check_name_conflict(&self, name: &str) -> Result<(), Error> {
+        // FIXME: We also need to check SFN name conflict
+        if self.files().any(|f| f.name() == name) {
+            Err(Error::FileAlreadyExists)
+        } else {
+            Ok(())
+        }
+    }
+
     fn insert_dir_entries(
-        &self,
+        &mut self,
         entries: impl ExactSizeIterator<Item = DirEntry>,
     ) -> Result<(), Error> {
         let required_len = entries.len();
@@ -149,7 +173,35 @@ impl<'a, V: Volume> Dir<'a, V> {
         Ok(())
     }
 
-    // TODO: create_file(..), create_dir(..)
+    pub fn create_file(&mut self, name: &str) -> Result<(), Error> {
+        self.check_name_conflict(name)?;
+        let entries =
+            DirEntry::lfn_sequence(name, SfnEntry::new()).ok_or(Error::InvalidFileName)?;
+        self.insert_dir_entries(entries.into_iter())
+    }
+
+    pub fn create_dir(&mut self, name: &str) -> Result<(), Error> {
+        self.check_name_conflict(name)?;
+        let mut entries =
+            DirEntry::lfn_sequence(name, SfnEntry::new()).ok_or(Error::InvalidFileName)?;
+        let c = self.root.fat().allocate()?;
+        {
+            let is_root = self.cluster == self.root.boot_sector().root_dir_cluster();
+            let current_dir = SfnEntry::current(Some(c));
+            let parent_dir = SfnEntry::parent((!is_root).then(|| self.cluster));
+            let mut c = self.root.cluster(c);
+            c.write_dir_entry(0, DirEntry::Sfn(current_dir))?;
+            c.write_dir_entry(1, DirEntry::Sfn(parent_dir))?;
+            c.write_dir_entry(2, DirEntry::UnusedTerminal)?;
+        }
+        if let Some(DirEntry::Sfn(ref mut sfn)) = entries.last_mut() {
+            sfn.set_is_directory(true);
+            sfn.set_cluster(Some(c));
+        } else {
+            panic!();
+        }
+        self.insert_dir_entries(entries.into_iter())
+    }
 }
 
 #[derive(Debug)]
@@ -175,6 +227,9 @@ impl<'a, V: Volume> Iterator for DirIter<'a, V> {
                 ReadLfnResult::Broken(_, e) => (sc, sn, entry) = (ec, en, e),
             }
         };
+        if matches!(name.as_str(), "." | "..") {
+            return self.next();
+        }
         Some(File {
             root: self.root,
             dir: self.dir,
@@ -189,7 +244,7 @@ impl<'a, V: Volume> Iterator for DirIter<'a, V> {
 pub struct File<'a, V> {
     root: &'a Root<V>,
     dir: Cluster,
-    name: String,
+    name: String, // must not be "." or ".."
     entry_location: (Cluster, usize),
     last_entry: (SfnEntry, Cluster, usize),
 }
@@ -203,7 +258,7 @@ impl<'a, V: Volume> File<'a, V> {
             .write_dir_entry(n, DirEntry::Sfn(entry))
     }
 
-    fn dir(&self) -> Dir<'a, V> {
+    fn parent(&self) -> Dir<'a, V> {
         Dir {
             root: self.root,
             cluster: self.dir,
@@ -259,7 +314,7 @@ impl<'a, V: Volume> File<'a, V> {
     // cluster, prepare_cluster, and release_cluster correspond to low_level::ChainedCluster methods
 
     fn cluster(&self) -> Option<BufferedCluster<'a, V>> {
-        self.last_entry.0.cluster().map(|c| self.root.cluster(c))
+        Some(self.root.cluster(self.last_entry.0.cluster()?))
     }
 
     fn prepare_cluster(&mut self) -> Result<BufferedCluster<'a, V>, Error> {
@@ -364,7 +419,7 @@ impl<'a, V: Volume> File<'a, V> {
 
     pub fn remove(mut self, recursive: bool) -> Result<(), Error> {
         if let Some(dir) = self.as_dir() {
-            for file in dir.files().filter(|f| !matches!(f.name(), "." | "..")) {
+            for file in dir.files() {
                 if recursive {
                     file.remove(true)?;
                 } else {
@@ -383,9 +438,9 @@ impl<'a, V: Volume> File<'a, V> {
     }
 
     pub fn mv(self, dir: Option<Dir<'a, V>>, name: Option<&str>) -> Result<(), Error> {
-        let (name, dir, entries) = match name {
+        let (name, mut dir, entries) = match name {
             Some(name) if name != self.name => {
-                let dir = dir.unwrap_or_else(|| self.dir());
+                let dir = dir.unwrap_or_else(|| self.parent());
                 let entries = DirEntry::lfn_sequence(name, self.last_entry.0)
                     .ok_or(Error::InvalidFileName)?;
                 (name, dir, entries)
@@ -403,10 +458,7 @@ impl<'a, V: Volume> File<'a, V> {
                 (self.name.as_str(), dir, entries)
             }
         };
-        // FIXME: We also need to check SFN name conflict
-        if dir.files().any(|f| f.name() == name) {
-            Err(Error::FileAlreadyExists)?;
-        }
+        dir.check_name_conflict(name)?;
         for (mut c, i, j) in self.dir_entry_locations() {
             for offset in i..=j {
                 c.write_dir_entry(offset, DirEntry::Unused)?;
