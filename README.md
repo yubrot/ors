@@ -75,8 +75,8 @@ ors is based on [MikanOS](https://github.com/uchan-nos/mikanos), [blog_os (Secon
   - [x] Memory Management
   - [x] Multitasking (Incomplete)
 - [ ] Compare with [xv6](https://github.com/mit-pdos/xv6-public)
+- [ ] Enable multicore
 - [ ] Try to implement TCP protocol stack
-- [ ] Compare with POSIX
 
 ## Resources
 
